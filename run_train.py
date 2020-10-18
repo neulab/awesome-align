@@ -49,7 +49,7 @@ class LineByLineTextDataset(Dataset):
         logger.info("Creating features from dataset file at %s", file_path)
 
         cache_fn = f'{file_path}.cache'
-        if args.to_cache and os.path.isfile(cache_fn):
+        if args.to_cache and os.path.isfile(cache_fn) and not args.overwrite_cache:
             logger.info("Loading cached data from %s", cache_fn)
             self.examples = torch.load(cache_fn)
         else:
@@ -69,8 +69,6 @@ class LineByLineTextDataset(Dataset):
                         wid_src, wid_tgt = [tokenizer.convert_tokens_to_ids(x) for x in token_src], [tokenizer.convert_tokens_to_ids(x) for x in token_tgt]
 
                         ids_src, ids_tgt = tokenizer.prepare_for_model(list(itertools.chain(*wid_src)), return_tensors='pt')['input_ids'], tokenizer.prepare_for_model(list(itertools.chain(*wid_tgt)), return_tensors='pt')['input_ids']
-                        ids_src, ids_tgt = torch.tensor(ids_src, dtype=torch.long),  torch.tensor(ids_tgt, dtype=torch.long)
-                        
 
                         bpe2word_map_src = []
                         for i, word_list in enumerate(token_src):
@@ -150,80 +148,80 @@ def mask_tokens(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, args, lang
     # The rest of the time (10% of the time) we keep the masked input tokens unchanged
     return inputs, labels
 
-def collate(examples):
-    model.eval()
-    examples_src, examples_tgt, examples_srctgt, langid_srctgt, psi_examples_srctgt, psi_labels = [], [], [], [], [], []
-    src_len = tgt_len = 0
-    for example in examples:
-        end_id = example[0][0][-1].view(-1)
-
-        src_id = example[0][0][:args.block_size]
-        src_id = torch.cat([src_id[:-1], end_id])
-        tgt_id = example[1][0][:args.block_size]
-        tgt_id = torch.cat([tgt_id[:-1], end_id])
-
-        half_block_size = int(args.block_size/2)
-        half_src_id = example[0][0][:half_block_size]
-        half_src_id = torch.cat([half_src_id[:-1], end_id])
-        half_tgt_id = example[1][0][:half_block_size]
-        half_tgt_id = torch.cat([half_tgt_id[:-1], end_id])
-
-        examples_src.append(src_id)
-        examples_tgt.append(tgt_id)
-        src_len = max(src_len, len(src_id))
-        tgt_len = max(tgt_len, len(tgt_id))
-
-        if random.random()> 0.5:
-            srctgt = torch.cat( [half_src_id, half_tgt_id] )
-            langid = torch.cat([ torch.ones_like(half_src_id), torch.ones_like(half_tgt_id)*2] )
-        else:
-            srctgt = torch.cat( [half_tgt_id, half_src_id])
-            langid = torch.cat([ torch.ones_like(half_tgt_id), torch.ones_like(half_src_id)*2] )
-        examples_srctgt.append(srctgt)
-        langid_srctgt.append(langid)
-
-        # [neg, neg] pair
-        neg_half_src_id = example[-2][0][:half_block_size]
-        neg_half_src_id = torch.cat([neg_half_src_id[:-1], end_id])
-        neg_half_neg_id = example[-1][0][:half_block_size]
-        neg_half_neg_id = torch.cat([neg_half_neg_id[:-1], end_id])
-        if random.random()> 0.5:
-            neg_srctgt = torch.cat( [neg_half_src_id, neg_half_tgt_id] )
-        else:
-            neg_srctgt = torch.cat( [neg_half_tgt_id, neg_half_src_id] )
-        psi_examples_srctgt.append(neg_srctgt)
-        psi_labels.append(1)
-            
-        # [pos, neg] pair
-        if random.random()> 0.5:
-            neg_srctgt = torch.cat([neg_half_src_id, neg_half_tgt_id])
-        else:
-            neg_srctgt = torch.cat([neg_half_tgt_id, neg_half_src_id])
-        psi_examples_srctgt.append(neg_srctgt)
-        psi_labels.append(0)
-
-    guides = []
-    for example, src, tgt in zip(examples, examples_src, examples_tgt):
-        if hasattr(model, "module"):
-            print('not supporting multi-gpus yet')
-            1/0
-            guide = model.module.get_aligned_word(src.unsqueeze(0), tgt.unsqueeze(0), example[2], example[3], args.device, tokenizer, src_len, tgt_len)
-        else:
-            guide = model.get_aligned_word(src.unsqueeze(0), tgt.unsqueeze(0), example[2], example[3], args.device, tokenizer, src_len, tgt_len, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold)
-        guides.append(guide)
-        
-    examples_src = pad_sequence(examples_src, batch_first=True, padding_value=tokenizer.pad_token_id)
-    examples_tgt = pad_sequence(examples_tgt, batch_first=True, padding_value=tokenizer.pad_token_id)
-    examples_srctgt = pad_sequence(examples_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
-    langid_srctgt = pad_sequence(langid_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
-    guides = torch.cat(guides)
-    psi_examples_srctgt = pad_sequence(psi_examples_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
-    psi_labels = torch.tensor(psi_labels)
-    return examples_src, examples_tgt, guides, examples_srctgt, langid_srctgt, psi_examples_srctgt, psi_labels
 
 def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedTokenizer) -> Tuple[int, float]:
     """ Train the model """
     args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
+    def collate(examples):
+        model.eval()
+        examples_src, examples_tgt, examples_srctgt, langid_srctgt, psi_examples_srctgt, psi_labels = [], [], [], [], [], []
+        src_len = tgt_len = 0
+        for example in examples:
+            end_id = example[0][0][-1].view(-1)
+
+            src_id = example[0][0][:args.block_size]
+            src_id = torch.cat([src_id[:-1], end_id])
+            tgt_id = example[1][0][:args.block_size]
+            tgt_id = torch.cat([tgt_id[:-1], end_id])
+
+            half_block_size = int(args.block_size/2)
+            half_src_id = example[0][0][:half_block_size]
+            half_src_id = torch.cat([half_src_id[:-1], end_id])
+            half_tgt_id = example[1][0][:half_block_size]
+            half_tgt_id = torch.cat([half_tgt_id[:-1], end_id])
+
+            examples_src.append(src_id)
+            examples_tgt.append(tgt_id)
+            src_len = max(src_len, len(src_id))
+            tgt_len = max(tgt_len, len(tgt_id))
+
+            if random.random()> 0.5:
+                srctgt = torch.cat( [half_src_id, half_tgt_id] )
+                langid = torch.cat([ torch.ones_like(half_src_id), torch.ones_like(half_tgt_id)*2] )
+            else:
+                srctgt = torch.cat( [half_tgt_id, half_src_id])
+                langid = torch.cat([ torch.ones_like(half_tgt_id), torch.ones_like(half_src_id)*2] )
+            examples_srctgt.append(srctgt)
+            langid_srctgt.append(langid)
+
+            # [neg, neg] pair
+            neg_half_src_id = example[-2][0][:half_block_size]
+            neg_half_src_id = torch.cat([neg_half_src_id[:-1], end_id])
+            neg_half_tgt_id = example[-1][0][:half_block_size]
+            neg_half_tgt_id = torch.cat([neg_half_tgt_id[:-1], end_id])
+            if random.random()> 0.5:
+                neg_srctgt = torch.cat( [neg_half_src_id, neg_half_tgt_id] )
+            else:
+                neg_srctgt = torch.cat( [neg_half_tgt_id, neg_half_src_id] )
+            psi_examples_srctgt.append(neg_srctgt)
+            psi_labels.append(1)
+                
+            # [pos, neg] pair
+            if random.random()> 0.5:
+                neg_srctgt = torch.cat([neg_half_src_id, neg_half_tgt_id])
+            else:
+                neg_srctgt = torch.cat([neg_half_tgt_id, neg_half_src_id])
+            psi_examples_srctgt.append(neg_srctgt)
+            psi_labels.append(0)
+
+        guides = []
+        for example, src, tgt in zip(examples, examples_src, examples_tgt):
+            if hasattr(model, "module"):
+                print('not supporting multi-gpus yet')
+                1/0
+                guide = model.module.get_aligned_word(src.unsqueeze(0), tgt.unsqueeze(0), example[2], example[3], args.device, tokenizer, src_len, tgt_len)
+            else:
+                guide = model.get_aligned_word(src.unsqueeze(0), tgt.unsqueeze(0), example[2], example[3], args.device, tokenizer, src_len, tgt_len, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold)
+            guides.append(guide)
+            
+        examples_src = pad_sequence(examples_src, batch_first=True, padding_value=tokenizer.pad_token_id)
+        examples_tgt = pad_sequence(examples_tgt, batch_first=True, padding_value=tokenizer.pad_token_id)
+        examples_srctgt = pad_sequence(examples_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
+        langid_srctgt = pad_sequence(langid_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
+        guides = torch.cat(guides)
+        psi_examples_srctgt = pad_sequence(psi_examples_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
+        psi_labels = torch.tensor(psi_labels)
+        return examples_src, examples_tgt, guides, examples_srctgt, langid_srctgt, psi_examples_srctgt, psi_labels
 
 
     train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
@@ -299,18 +297,19 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
     )
     set_seed(args)  # Added here for reproducibility
 
-    def backward_loss(loss): 
+    def backward_loss(loss, tot_loss):
         if args.n_gpu > 1:
             loss = loss.mean()  # mean() to average on multi-gpu parallel training
         if args.gradient_accumulation_steps > 1:
             loss = loss / args.gradient_accumulation_steps
 
-        tr_loss += loss.item()
+        tot_loss += loss.item()
         if args.fp16:
             with amp.scale_loss(loss, optimizer) as scaled_loss:
                 scaled_loss.backward()
         else:
             loss.backward()
+        return tot_loss
 
     for _ in train_iterator:
         epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
@@ -328,35 +327,35 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
                 attention_mask_src, attention_mask_tgt = (inputs_src!=0), (inputs_tgt!=0)
                 guide = batch[2].to(args.device)
                 loss = model(inputs_src=inputs_src, inputs_tgt=inputs_tgt, attention_mask_src=attention_mask_src, attention_mask_tgt=attention_mask_tgt, guide=guide, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold)
-                backward_loss(loss)
+                tr_loss = backward_loss(loss, tr_loss)
 
             if args.train_mlm:
                 inputs_src, labels_src = mask_tokens(batch[0], tokenizer, args)
                 inputs_tgt, labels_tgt = mask_tokens(batch[1], tokenizer, args)
                 inputs_src, inputs_tgt = inputs_src.to(args.device), inputs_tgt.to(args.device)
+                labels_src, labels_tgt = labels_src.to(args.device), labels_tgt.to(args.device)
                 loss = model(inputs_src=inputs_src, labels_src=labels_src)
-                backward_loss(loss)
+                tr_loss = backward_loss(loss, tr_loss)
 
                 loss = model(inputs_src=inputs_tgt, labels_src=labels_tgt)
-                backward_loss(loss)
+                tr_loss = backward_loss(loss, tr_loss)
 
             if args.train_tlm:
                 inputs_srctgt, labels_srctgt = mask_tokens(batch[3], tokenizer, args, batch[4], 1)
                 inputs_srctgt, labels_srctgt = inputs_srctgt.to(args.device), labels_srctgt.to(args.device)
                 loss = model(inputs_src=inputs_srctgt, labels_src=labels_srctgt)
-                backward_loss(loss)
+                tr_loss = backward_loss(loss, tr_loss)
 
                 inputs_srctgt, labels_srctgt = mask_tokens(batch[3], tokenizer, args, batch[4], 2)
                 inputs_srctgt, labels_srctgt = inputs_srctgt.to(args.device), labels_srctgt.to(args.device)
                 loss = model(inputs_src=inputs_srctgt, labels_src=labels_srctgt)
-                backward_loss(loss)
+                tr_loss = backward_loss(loss, tr_loss)
 
             if args.train_psi:
                 loss = model(inputs_src=batch[5].to(args.device), labels_psi=batch[6].to(args.device))
-                backward_loss(loss)
+                tr_loss = backward_loss(loss, tr_loss)
 
 
-            tr_loss += loss.item()
             if (step + 1) % args.gradient_accumulation_steps == 0:
                 if args.fp16:
                     torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
@@ -366,6 +365,10 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
                 scheduler.step()  # Update learning rate schedule
                 model.zero_grad()
                 global_step += 1
+
+                if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
+                    logger.info("  Step %s. Training loss = %s", str(global_step), str((tr_loss-logging_loss)/args.logging_steps))
+                    logging_loss = tr_loss
 
                 if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:
                     checkpoint_prefix = "checkpoint"
@@ -407,6 +410,66 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
 
     args.eval_batch_size = args.per_gpu_eval_batch_size * max(1, args.n_gpu)
     # Note that DistributedSampler samples randomly
+    def collate(examples):
+        model.eval()
+        examples_src, examples_tgt, examples_srctgt, langid_srctgt, psi_examples_srctgt, psi_labels = [], [], [], [], [], []
+        src_len = tgt_len = 0
+        for example in examples:
+            end_id = example[0][0][-1].view(-1)
+
+            src_id = example[0][0][:args.block_size]
+            src_id = torch.cat([src_id[:-1], end_id])
+            tgt_id = example[1][0][:args.block_size]
+            tgt_id = torch.cat([tgt_id[:-1], end_id])
+
+            half_block_size = int(args.block_size/2)
+            half_src_id = example[0][0][:half_block_size]
+            half_src_id = torch.cat([half_src_id[:-1], end_id])
+            half_tgt_id = example[1][0][:half_block_size]
+            half_tgt_id = torch.cat([half_tgt_id[:-1], end_id])
+
+            examples_src.append(src_id)
+            examples_tgt.append(tgt_id)
+            src_len = max(src_len, len(src_id))
+            tgt_len = max(tgt_len, len(tgt_id))
+
+            srctgt = torch.cat( [half_src_id, half_tgt_id] )
+            langid = torch.cat([ torch.ones_like(half_src_id), torch.ones_like(half_tgt_id)*2] )
+            examples_srctgt.append(srctgt)
+            langid_srctgt.append(langid)
+
+            # [neg, neg] pair
+            neg_half_src_id = example[-2][0][:half_block_size]
+            neg_half_src_id = torch.cat([neg_half_src_id[:-1], end_id])
+            neg_half_tgt_id = example[-1][0][:half_block_size]
+            neg_half_tgt_id = torch.cat([neg_half_tgt_id[:-1], end_id])
+            neg_srctgt = torch.cat( [neg_half_src_id, neg_half_tgt_id] )
+            psi_examples_srctgt.append(neg_srctgt)
+            psi_labels.append(1)
+                
+            # [pos, neg] pair
+            neg_srctgt = torch.cat([neg_half_src_id, neg_half_tgt_id])
+            psi_examples_srctgt.append(neg_srctgt)
+            psi_labels.append(0)
+
+        guides = []
+        for example, src, tgt in zip(examples, examples_src, examples_tgt):
+            if hasattr(model, "module"):
+                print('not supporting multi-gpus yet')
+                1/0
+                guide = model.module.get_aligned_word(src.unsqueeze(0), tgt.unsqueeze(0), example[2], example[3], args.device, tokenizer, src_len, tgt_len)
+            else:
+                guide = model.get_aligned_word(src.unsqueeze(0), tgt.unsqueeze(0), example[2], example[3], args.device, tokenizer, src_len, tgt_len, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold)
+            guides.append(guide)
+            
+        examples_src = pad_sequence(examples_src, batch_first=True, padding_value=tokenizer.pad_token_id)
+        examples_tgt = pad_sequence(examples_tgt, batch_first=True, padding_value=tokenizer.pad_token_id)
+        examples_srctgt = pad_sequence(examples_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
+        langid_srctgt = pad_sequence(langid_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
+        guides = torch.cat(guides)
+        psi_examples_srctgt = pad_sequence(psi_examples_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
+        psi_labels = torch.tensor(psi_labels)
+        return examples_src, examples_tgt, guides, examples_srctgt, langid_srctgt, psi_examples_srctgt, psi_labels
 
     eval_sampler = SequentialSampler(eval_dataset)
     eval_dataloader = DataLoader(
@@ -426,10 +489,11 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
     model.eval()
     set_seed(args)  # Added here for reproducibility
 
-    def post_loss(loss): 
+    def post_loss(loss, tot_loss): 
         if args.n_gpu > 1:
             loss = loss.mean()  # mean() to average on multi-gpu parallel training
-        eval_loss += less.item()
+        tot_loss += loss.item()
+        return tot_loss
 
     for batch in tqdm(eval_dataloader, desc="Evaluating"):
         with torch.no_grad():
@@ -439,32 +503,33 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
                 attention_mask_src, attention_mask_tgt = (inputs_src!=0), (inputs_tgt!=0)
                 guide = batch[2].to(args.device)
                 loss = model(inputs_src=inputs_src, inputs_tgt=inputs_tgt, attention_mask_src=attention_mask_src, attention_mask_tgt=attention_mask_tgt, guide=guide, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold)
-                post_loss(loss)
+                eval_loss = post_loss(loss, eval_loss)
 
             if args.train_mlm:
                 inputs_src, labels_src = mask_tokens(batch[0], tokenizer, args)
                 inputs_tgt, labels_tgt = mask_tokens(batch[1], tokenizer, args)
                 inputs_src, inputs_tgt = inputs_src.to(args.device), inputs_tgt.to(args.device)
+                labels_src, labels_tgt = labels_src.to(args.device), labels_tgt.to(args.device)
                 loss = model(inputs_src=inputs_src, labels_src=labels_src)
-                post_loss(loss)
+                eval_loss = post_loss(loss, eval_loss)
 
                 loss = model(inputs_src=inputs_tgt, labels_src=labels_tgt)
-                post_loss(loss)
+                eval_loss = post_loss(loss, eval_loss)
 
             if args.train_tlm:
                 inputs_srctgt, labels_srctgt = mask_tokens(batch[3], tokenizer, args, batch[4], 1)
                 inputs_srctgt, labels_srctgt = inputs_srctgt.to(args.device), labels_srctgt.to(args.device)
                 loss = model(inputs_src=inputs_srctgt, labels_src=labels_srctgt)
-                post_loss(loss)
+                eval_loss = post_loss(loss, eval_loss)
 
                 inputs_srctgt, labels_srctgt = mask_tokens(batch[3], tokenizer, args, batch[4], 2)
                 inputs_srctgt, labels_srctgt = inputs_srctgt.to(args.device), labels_srctgt.to(args.device)
                 loss = model(inputs_src=inputs_srctgt, labels_src=labels_srctgt)
-                post_loss(loss)
+                eval_loss = post_loss(loss, eval_loss)
 
             if args.train_psi:
                 loss = model(inputs_src=batch[5].to(args.device), labels_psi=batch[6].to(args.device))
-                post_loss(loss)
+                eval_loss = post_loss(loss, eval_loss)
 
         nb_eval_steps += 1
 
@@ -578,7 +643,7 @@ def main():
     )
     parser.add_argument("--warmup_steps", default=0, type=int, help="Linear warmup over warmup_steps.")
 
-    parser.add_argument("--logging_steps", type=int, default=500, help="Log every X updates steps.")
+    parser.add_argument("--logging_steps", type=int, default=10, help="Log every X updates steps.")
     parser.add_argument("--save_steps", type=int, default=500, help="Save checkpoint every X updates steps.")
     parser.add_argument(
         "--save_total_limit",

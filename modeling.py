@@ -485,6 +485,12 @@ class BertModel(BertPreTrainedModel):
 
         self.init_weights()
 
+    def get_input_embeddings(self):
+        return self.embeddings.word_embeddings
+
+    def set_input_embeddings(self, value):
+        self.embeddings.word_embeddings = value
+
     @add_start_docstrings_to_callable(BERT_INPUTS_DOCSTRING)
     def forward(
         self,
@@ -535,8 +541,8 @@ class BertGuideHead(nn.Module):
         #mask
         attention_mask_src = ( (inputs_src==0) + (inputs_src==101) + (inputs_src==102) )
         attention_mask_tgt = ( (inputs_tgt==0) + (inputs_tgt==101) + (inputs_tgt==102) )
-        attention_mask_src = return_extended_attention_mask(1-attention_mask_src, next(self.parameters()).dtype)
-        attention_mask_tgt = return_extended_attention_mask(1-attention_mask_tgt, next(self.parameters()).dtype)
+        attention_mask_src = return_extended_attention_mask(1-attention_mask_src, hidden_states_src.dtype)
+        attention_mask_tgt = return_extended_attention_mask(1-attention_mask_tgt, hidden_states_src.dtype)
 
         #qkv
         query_src = self.transpose_for_scores(hidden_states_src)
@@ -628,7 +634,7 @@ class BertForMaskedLM(BertPreTrainedModel):
             position_ids=position_ids2,
         )
 
-        so_loss = self.guide_layer(outputs_src, outputs_tgt, inputs_src, inputs_tgt, guide=guide)
+        so_loss = self.guide_layer(outputs_src, outputs_tgt, inputs_src, inputs_tgt, guide=guide, extraction=extraction, softmax_threshold=softmax_threshold)
         return so_loss
 
     def get_aligned_word(self, inputs_src, inputs_tgt, bpe2word_map_src, bpe2word_map_tgt, device, tokenizer, src_len, tgt_len, align_layer=8, extraction='softmax', softmax_threshold=0.001, test=False):
@@ -648,7 +654,7 @@ class BertForMaskedLM(BertPreTrainedModel):
                 attention_mask=None,
             )
 
-            attention_probs_inter = self.guide_layer(outputs_src, outputs_tgt, inputs_src, inputs_tgt)
+            attention_probs_inter = self.guide_layer(outputs_src, outputs_tgt, inputs_src, inputs_tgt, extraction=extraction, softmax_threshold=softmax_threshold)
             attention_probs_inter = attention_probs_inter.float()
             
         attention_probs_inter = attention_probs_inter[0, 0, 1:-1, 1:-1]

@@ -16,21 +16,13 @@
 
 
 import argparse
-import glob
-import logging
-import os
 import random
-import re
-from typing import Dict, List, Tuple
+import itertools
 
 import numpy as np
 import torch
-from torch.nn.utils.rnn import pad_sequence
-from torch.utils.data import DataLoader, Dataset, RandomSampler, SequentialSampler
-from torch.utils.data.distributed import DistributedSampler
-from tqdm import tqdm, trange
+from tqdm import tqdm
 
-from train_utils import _sorted_checkpoints, _rotate_checkpoints, WEIGHTS_NAME, AdamW, get_linear_schedule_with_warmup
 from configuration_bert import BertConfig
 from modeling import BertForMaskedLM
 from tokenization_bert import BertTokenizer
@@ -38,7 +30,6 @@ from tokenization_utils import PreTrainedTokenizer
 from modeling_utils import PreTrainedModel
 
 
-import itertools
 
 def set_seed(args):
     random.seed(args.seed)
@@ -51,7 +42,7 @@ def word_align(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer):
     model.eval()
     with open(args.data_file, encoding="utf-8") as f:
         with open(args.output_file, 'w') as writer:
-            for line in f.readlines():
+            for line in tqdm(f.readlines()):
                 if len(line) > 0 and not line.isspace() and len(line.split(' ||| ')) == 2:
                     try:
                         src, tgt = line.split(' ||| ')
@@ -65,7 +56,7 @@ def word_align(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer):
                     token_src, token_tgt = [tokenizer.tokenize(word) for word in sent_src], [tokenizer.tokenize(word) for word in sent_tgt]
                     wid_src, wid_tgt = [tokenizer.convert_tokens_to_ids(x) for x in token_src], [tokenizer.convert_tokens_to_ids(x) for x in token_tgt]
                     ids_src, ids_tgt = tokenizer.prepare_for_model(list(itertools.chain(*wid_src)), return_tensors='pt')['input_ids'], tokenizer.prepare_for_model(list(itertools.chain(*wid_tgt)), return_tensors='pt')['input_ids']
-                    ids_src, ids_tgt = torch.tensor(ids_src, dtype=torch.long),  torch.tensor(ids_tgt, dtype=torch.long)
+                    ids_src, ids_tgt = ids_src.to(args.device), ids_tgt.to(args.device)
                     
 
                     bpe2word_map_src = []
@@ -75,7 +66,7 @@ def word_align(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer):
                     for i, word_list in enumerate(token_tgt):
                         bpe2word_map_tgt += [i for x in word_list]
 
-                    word_aligns = model.get_aligned_word(ids_src.unsqueeze(0), ids_tgt.unsqueeze(0), bpe2word_map_src, bpe2word_map_tgt, args.device, tokenizer, 0, 0, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold, test=True)
+                    word_aligns = model.get_aligned_word(ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, tokenizer, 0, 0, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold, test=True)
                     output_str = []
                     for word_align in word_aligns:
                         output_str.append(f'{word_align[0]}-{word_align[1]}')
@@ -122,6 +113,7 @@ def main():
         type=str,
         help="Optional pretrained tokenizer name or path if not the same as model_name_or_path. If both are None, initialize a new tokenizer.",
     )
+    parser.add_argument("--seed", type=int, default=42, help="random seed for initialization")
     parser.add_argument(
         "--cache_dir",
         default='cache_dir',
@@ -138,10 +130,7 @@ def main():
     )
     parser.add_argument("--no_cuda", action="store_true", help="Avoid using CUDA when available")
     args = parser.parse_args()
-
-    # Setup CUDA, GPU & distributed training
-    if args.no_cuda:
-        device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
     args.device = device
 
     # Set seed
