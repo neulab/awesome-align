@@ -42,38 +42,42 @@ def word_align(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer):
     model.to(args.device)
     model.eval()
     with open(args.data_file, encoding="utf-8") as f:
-        with open(args.output_file, 'w') as writer:
-            for line in tqdm(f.readlines()):
-                if len(line) > 0 and not line.isspace() and len(line.split(' ||| ')) == 2:
-                    try:
-                        src, tgt = line.split(' ||| ')
-                        if src.rstrip() == '' or tgt.rstrip() == '':
-                            writer.write('ERROR\n')
-                            continue
-                    except:
-                        writer.write('ERROR\n')
+        outputs = []
+        for line in tqdm(f.readlines()):
+            if len(line) > 0 and not line.isspace() and len(line.split(' ||| ')) == 2:
+                try:
+                    src, tgt = line.split(' ||| ')
+                    if src.rstrip() == '' or tgt.rstrip() == '':
+                        outputs.append('ERROR\n')
                         continue
-                    sent_src, sent_tgt = src.strip().split(), tgt.strip().split()
-                    token_src, token_tgt = [tokenizer.tokenize(word) for word in sent_src], [tokenizer.tokenize(word) for word in sent_tgt]
-                    wid_src, wid_tgt = [tokenizer.convert_tokens_to_ids(x) for x in token_src], [tokenizer.convert_tokens_to_ids(x) for x in token_tgt]
-                    ids_src, ids_tgt = tokenizer.prepare_for_model(list(itertools.chain(*wid_src)), return_tensors='pt')['input_ids'], tokenizer.prepare_for_model(list(itertools.chain(*wid_tgt)), return_tensors='pt')['input_ids']
-                    ids_src, ids_tgt = ids_src.to(args.device), ids_tgt.to(args.device)
-                    
+                except:
+                    outputs.append('ERROR\n')
+                    continue
+                sent_src, sent_tgt = src.strip().split(), tgt.strip().split()
+                token_src, token_tgt = [tokenizer.tokenize(word) for word in sent_src], [tokenizer.tokenize(word) for word in sent_tgt]
+                wid_src, wid_tgt = [tokenizer.convert_tokens_to_ids(x) for x in token_src], [tokenizer.convert_tokens_to_ids(x) for x in token_tgt]
+                ids_src, ids_tgt = tokenizer.prepare_for_model(list(itertools.chain(*wid_src)), return_tensors='pt')['input_ids'], tokenizer.prepare_for_model(list(itertools.chain(*wid_tgt)), return_tensors='pt')['input_ids']
+                ids_src, ids_tgt = ids_src.to(args.device), ids_tgt.to(args.device)
+                
 
-                    bpe2word_map_src = []
-                    for i, word_list in enumerate(token_src):
-                        bpe2word_map_src += [i for x in word_list]
-                    bpe2word_map_tgt = []
-                    for i, word_list in enumerate(token_tgt):
-                        bpe2word_map_tgt += [i for x in word_list]
+                bpe2word_map_src = []
+                for i, word_list in enumerate(token_src):
+                    bpe2word_map_src += [i for x in word_list]
+                bpe2word_map_tgt = []
+                for i, word_list in enumerate(token_tgt):
+                    bpe2word_map_tgt += [i for x in word_list]
 
-                    word_aligns = model.get_aligned_word(ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, tokenizer, 0, 0, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold, test=True)
-                    output_str = []
-                    for word_align in word_aligns:
-                        output_str.append(f'{word_align[0]}-{word_align[1]}')
-                    writer.write(' '.join(output_str)+'\n')
-                else:
-                    writer.write('ERROR\n')
+                word_aligns = model.get_aligned_word(ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, tokenizer, 0, 0, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold, test=True)
+                output_str = []
+                for word_align in word_aligns:
+                    output_str.append(f'{word_align[0]}-{word_align[1]}')
+                outputs.append(' '.join(output_str)+'\n')
+            else:
+                outputs.append('ERROR\n')
+            
+    with open(args.output_file, 'w') as writer:
+        for output in outputs:
+            writer.write(output)
 
 
 def main():
@@ -121,14 +125,6 @@ def main():
         type=str,
         help="Optional directory to store the pre-trained models downloaded from s3 (instead of the default one)",
     )
-    parser.add_argument(
-        "--block_size",
-        default=-1,
-        type=int,
-        help="Optional input sequence length after tokenization."
-        "The training dataset will be truncated in block of this size for training."
-        "Default to the model max input length for single sentence inputs (take into account special tokens).",
-    )
     parser.add_argument("--no_cuda", action="store_true", help="Avoid using CUDA when available")
     args = parser.parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
@@ -153,12 +149,6 @@ def main():
             "You are instantiating a new {} tokenizer. This is not supported, but you can do it from another script, save it,"
             "and load it from here, using --tokenizer_name".format(tokenizer_class.__name__)
         )
-
-    if args.block_size <= 0:
-        args.block_size = tokenizer.max_len
-        # Our input block size will be the max possible for the model
-    else:
-        args.block_size = min(args.block_size, tokenizer.max_len)
 
     if args.model_name_or_path:
         model = model_class.from_pretrained(

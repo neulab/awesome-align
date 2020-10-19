@@ -51,7 +51,7 @@ python run_align.py \
     --extraction 'softmax' \
 ```
 
-This produces outputs in the `i-j` “Pharaoh format.” A pair `i-j` indicates that the <i>i</i>th word (zero-indexed) of the source sentence is aligned to the <i>j</i>th word of the target sentence.
+This produces outputs in the `i-j` Pharaoh format. A pair `i-j` indicates that the <i>i</i>th word (zero-indexed) of the source sentence is aligned to the <i>j</i>th word of the target sentence.
 
 You can also set `MODEL_NAME_OR_PATH` to the path of your fine-tuned model.
 
