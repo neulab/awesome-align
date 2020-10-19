@@ -43,6 +43,7 @@ Here is an example of extracting word alignments from multilingual BERT:
 DATA_FILE=/path/to/data/file
 MODEL_NAME_OR_PATH=bert-base-multilingual-cased
 OUTPUT_FILE=/path/to/output/file
+
 python run_align.py \
     --output_file=$OUTPUT_FILE \
     --model_name_or_path=$MODEL_NAME_OR_PATH \
@@ -53,3 +54,7 @@ python run_align.py \
 This produces outputs in the `i-j` “Pharaoh format.” A pair `i-j` indicates that the <i>i</i>th word (zero-indexed) of the source sentence is aligned to the <i>j</i>th word of the target sentence.
 
 You can also set `MODEL_NAME_OR_PATH` to the path of your fine-tuned model.
+
+## Acknowledgements
+
+Some of the code is borrowed from [HugginFace Transformers](https://github.com/huggingface/transformers).
