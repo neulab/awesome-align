@@ -32,10 +32,11 @@ from modeling_utils import PreTrainedModel
 
 
 def set_seed(args):
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    torch.cuda.manual_seed_all(args.seed)
+    if args.seed >= 0:
+        random.seed(args.seed)
+        np.random.seed(args.seed)
+        torch.manual_seed(args.seed)
+        torch.cuda.manual_seed_all(args.seed)
 
 def word_align(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer):
     model.to(args.device)

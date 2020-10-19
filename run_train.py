@@ -49,7 +49,7 @@ class LineByLineTextDataset(Dataset):
         logger.info("Creating features from dataset file at %s", file_path)
 
         cache_fn = f'{file_path}.cache'
-        if args.to_cache and os.path.isfile(cache_fn) and not args.overwrite_cache:
+        if args.cache_data and os.path.isfile(cache_fn) and not args.overwrite_cache:
             logger.info("Loading cached data from %s", cache_fn)
             self.examples = torch.load(cache_fn)
         else:
@@ -79,7 +79,7 @@ class LineByLineTextDataset(Dataset):
 
                         self.examples.append( (ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt) )
 
-            if args.to_cache:
+            if args.cache_data:
                 logger.info("Saving cached data to %s", cache_fn)
                 torch.save(self.examples, cache_fn)
 
@@ -93,7 +93,6 @@ class LineByLineTextDataset(Dataset):
         while neg_i == i:
             neg_i = random.randint(0, len(self.examples)-1)
         return tuple(list(self.examples[i]) + list(self.examples[neg_i][:2] ) )
-        #return tuple(list(self.examples[i]) + list(self.examples[ (i+1)%len(self.examples) ][:2] ) )
 
 
 def load_and_cache_examples(args, tokenizer, evaluate=False):
@@ -102,10 +101,11 @@ def load_and_cache_examples(args, tokenizer, evaluate=False):
 
 
 def set_seed(args):
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    torch.cuda.manual_seed_all(args.seed)
+    if args.seed >= 0:
+        random.seed(args.seed)
+        np.random.seed(args.seed)
+        torch.manual_seed(args.seed)
+        torch.cuda.manual_seed_all(args.seed)
 
 
 def mask_tokens(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, args, langid_mask=None, lang_id=None) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -229,11 +229,10 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
         train_dataset, sampler=train_sampler, batch_size=args.train_batch_size, collate_fn=collate
     )
 
-    if args.max_steps > 0:
+    t_total = len(train_dataloader) // args.gradient_accumulation_steps * args.num_train_epochs
+    if args.max_steps > 0 and args.max_steps < t_total:
         t_total = args.max_steps
         args.num_train_epochs = args.max_steps // (len(train_dataloader) // args.gradient_accumulation_steps) + 1
-    else:
-        t_total = len(train_dataloader) // args.gradient_accumulation_steps * args.num_train_epochs
     
     # Prepare optimizer and schedule (linear warmup and decay)
     no_decay = ["bias", "LayerNorm.weight"]
@@ -283,8 +282,6 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
     logger.info("  Total optimization steps = %d", t_total)
 
     global_step = 0
-    epochs_trained = 0
-    steps_trained_in_current_epoch = 0
     # Check if continuing training from a checkpoint
     tr_loss, logging_loss = 0.0, 0.0
 
@@ -292,9 +289,6 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
     model_to_resize.resize_token_embeddings(len(tokenizer))
 
     model.zero_grad()
-    train_iterator = trange(
-        epochs_trained, int(args.num_train_epochs), desc="Epoch", disable=args.local_rank not in [-1, 0]
-    )
     set_seed(args)  # Added here for reproducibility
 
     def backward_loss(loss, tot_loss):
@@ -311,13 +305,9 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
             loss.backward()
         return tot_loss
 
-    for _ in train_iterator:
-        epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
-        for step, batch in enumerate(epoch_iterator):
-            # Skip past any already trained steps if resuming training
-            if steps_trained_in_current_epoch > 0:
-                steps_trained_in_current_epoch -= 1
-                continue
+    tqdm_iterator = trange(int(t_total), desc="Iteration", disable=args.local_rank not in [-1, 0])
+    for _ in range(int(args.num_train_epochs)):
+        for step, batch in enumerate(train_dataloader):
 
             model.train()
 
@@ -365,6 +355,7 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
                 scheduler.step()  # Update learning rate schedule
                 model.zero_grad()
                 global_step += 1
+                tqdm_iterator.update()
 
                 if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
                     logger.info("  Step %s. Training loss = %s", str(global_step), str((tr_loss-logging_loss)/args.logging_steps))
@@ -390,11 +381,9 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
                     torch.save(scheduler.state_dict(), os.path.join(output_dir, "scheduler.pt"))
                     logger.info("Saving optimizer and scheduler states to %s", output_dir)
 
-            if args.max_steps > 0 and global_step > args.max_steps:
-                epoch_iterator.close()
+            if global_step > t_total:
                 break
-        if args.max_steps > 0 and global_step > args.max_steps:
-            train_iterator.close()
+        if global_step > t_total:
             break
 
     return global_step, tr_loss / global_step
@@ -567,7 +556,7 @@ def main():
     parser.add_argument("--train_so", action="store_true")
     parser.add_argument("--train_psi", action="store_true")
     # Other parameters
-    parser.add_argument("--to_cache", action="store_true", help='if cache the dataset')
+    parser.add_argument("--cache_data", action="store_true", help='if cache the dataset')
     parser.add_argument("--align_layer", type=int, default=8, help="layer for alignment extraction")
     parser.add_argument(
         "--extraction", default='softmax', type=str, help='softmax or entmax15'
@@ -643,7 +632,7 @@ def main():
     )
     parser.add_argument("--warmup_steps", default=0, type=int, help="Linear warmup over warmup_steps.")
 
-    parser.add_argument("--logging_steps", type=int, default=10, help="Log every X updates steps.")
+    parser.add_argument("--logging_steps", type=int, default=500, help="Log every X updates steps.")
     parser.add_argument("--save_steps", type=int, default=500, help="Save checkpoint every X updates steps.")
     parser.add_argument(
         "--save_total_limit",
