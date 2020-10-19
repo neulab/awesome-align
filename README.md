@@ -57,4 +57,4 @@ You can also set `MODEL_NAME_OR_PATH` to the path of your fine-tuned model.
 
 ## Acknowledgements
 
-Some of the code is borrowed from [HugginFace Transformers](https://github.com/huggingface/transformers).
+Some of the code is borrowed from [HuggingFace Transformers](https://github.com/huggingface/transformers).
