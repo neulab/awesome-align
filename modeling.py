@@ -541,8 +541,8 @@ class BertGuideHead(nn.Module):
         #mask
         attention_mask_src = ( (inputs_src==0) + (inputs_src==101) + (inputs_src==102) )
         attention_mask_tgt = ( (inputs_tgt==0) + (inputs_tgt==101) + (inputs_tgt==102) )
-        attention_mask_src = return_extended_attention_mask(1-attention_mask_src, hidden_states_src.dtype)
-        attention_mask_tgt = return_extended_attention_mask(1-attention_mask_tgt, hidden_states_src.dtype)
+        attention_mask_src = return_extended_attention_mask(1-attention_mask_src.float(), hidden_states_src.dtype)
+        attention_mask_tgt = return_extended_attention_mask(1-attention_mask_tgt.float(), hidden_states_src.dtype)
 
         #qkv
         query_src = self.transpose_for_scores(hidden_states_src)
