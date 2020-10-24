@@ -197,10 +197,15 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
             psi_labels.append(1)
                 
             # [pos, neg] pair
-            if random.random()> 0.5:
-                neg_srctgt = torch.cat([neg_half_src_id, neg_half_tgt_id])
+            rd = random.random()
+            if rd> 0.75:
+                neg_srctgt = torch.cat([half_src_id, neg_half_tgt_id])
+            elif rd > 0.5:
+                neg_srctgt = torch.cat([neg_half_src_id, half_tgt_id])
+            elif rd > 0.25:
+                neg_srctgt = torch.cat([half_tgt_id, neg_half_src_id])
             else:
-                neg_srctgt = torch.cat([neg_half_tgt_id, neg_half_src_id])
+                neg_srctgt = torch.cat([neg_half_tgt_id, half_src_id])
             psi_examples_srctgt.append(neg_srctgt)
             psi_labels.append(0)
 
@@ -437,7 +442,7 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
             psi_labels.append(1)
                 
             # [pos, neg] pair
-            neg_srctgt = torch.cat([neg_half_src_id, neg_half_tgt_id])
+            neg_srctgt = torch.cat([half_src_id, neg_half_tgt_id])
             psi_examples_srctgt.append(neg_srctgt)
             psi_labels.append(0)
 
