@@ -347,7 +347,7 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
                 tr_loss = backward_loss(loss, tr_loss)
 
             if args.train_psi:
-                loss = model(inputs_src=batch[5].to(args.device), labels_psi=batch[6].to(args.device))
+                loss = model(inputs_src=batch[5].to(args.device), labels_psi=batch[6].to(args.device), align_layer=args.align_layer+1)
                 tr_loss = backward_loss(loss, tr_loss)
 
 

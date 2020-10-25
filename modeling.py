@@ -593,7 +593,7 @@ class BertForMaskedLM(BertPreTrainedModel):
         labels_tgt=None,
         attention_mask_src=None,
         attention_mask_tgt=None,
-        align_layer=8,
+        align_layer=-1,
         guide=None,
         extraction='softmax', softmax_threshold=0.001,
         position_ids1=None,
@@ -607,7 +607,7 @@ class BertForMaskedLM(BertPreTrainedModel):
         outputs_src = self.bert(
             inputs_src,
             attention_mask=attention_mask_src,
-            align_layer=-1 if inputs_tgt is None else align_layer,
+            align_layer=align_layer,
             position_ids=position_ids1,
         )
 
