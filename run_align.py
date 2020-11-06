@@ -18,10 +18,13 @@
 import argparse
 import random
 import itertools
+import os
 
 import numpy as np
 import torch
-from tqdm import tqdm
+from tqdm import trange
+from torch.nn.utils.rnn import pad_sequence
+from torch.utils.data import DataLoader, Dataset, SequentialSampler
 
 from configuration_bert import BertConfig
 from modeling import BertForMaskedLM
@@ -38,27 +41,25 @@ def set_seed(args):
         torch.manual_seed(args.seed)
         torch.cuda.manual_seed_all(args.seed)
 
-def word_align(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer):
-    model.to(args.device)
-    model.eval()
-    with open(args.data_file, encoding="utf-8") as f:
-        outputs = []
-        for line in tqdm(f.readlines()):
-            if len(line) > 0 and not line.isspace() and len(line.split(' ||| ')) == 2:
-                try:
-                    src, tgt = line.split(' ||| ')
-                    if src.rstrip() == '' or tgt.rstrip() == '':
-                        outputs.append('ERROR\n')
-                        continue
-                except:
-                    outputs.append('ERROR\n')
-                    continue
+class LineByLineTextDataset(Dataset):
+    def __init__(self, tokenizer: PreTrainedTokenizer, args, file_path):
+        assert os.path.isfile(file_path)
+        print('Loading the dataset...')
+        self.examples = []
+        with open(file_path, encoding="utf-8") as f:
+            for idx, line in enumerate(f.readlines()):
+                if len(line) == 0 or line.isspace() or not len(line.split(' ||| ')) == 2:
+                    raise ValueError(f'Line {idx+1} is not in the correct format!')
+                
+                src, tgt = line.split(' ||| ')
+                if src.rstrip() == '' or tgt.rstrip() == '':
+                    raise ValueError(f'Line {idx+1} is not in the correct format!')
+            
                 sent_src, sent_tgt = src.strip().split(), tgt.strip().split()
                 token_src, token_tgt = [tokenizer.tokenize(word) for word in sent_src], [tokenizer.tokenize(word) for word in sent_tgt]
                 wid_src, wid_tgt = [tokenizer.convert_tokens_to_ids(x) for x in token_src], [tokenizer.convert_tokens_to_ids(x) for x in token_tgt]
+
                 ids_src, ids_tgt = tokenizer.prepare_for_model(list(itertools.chain(*wid_src)), return_tensors='pt', max_length=tokenizer.max_len)['input_ids'], tokenizer.prepare_for_model(list(itertools.chain(*wid_tgt)), return_tensors='pt', max_length=tokenizer.max_len)['input_ids']
-                ids_src, ids_tgt = ids_src.to(args.device), ids_tgt.to(args.device)
-                
 
                 bpe2word_map_src = []
                 for i, word_list in enumerate(token_src):
@@ -67,17 +68,42 @@ def word_align(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer):
                 for i, word_list in enumerate(token_tgt):
                     bpe2word_map_tgt += [i for x in word_list]
 
-                word_aligns = model.get_aligned_word(ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, tokenizer, 0, 0, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold, test=True)
-                output_str = []
-                for word_align in word_aligns:
-                    output_str.append(f'{word_align[0]}-{word_align[1]}')
-                outputs.append(' '.join(output_str)+'\n')
-            else:
-                outputs.append('ERROR\n')
-            
+                self.examples.append( (ids_src[0], ids_tgt[0], bpe2word_map_src, bpe2word_map_tgt) )
+
+    def __len__(self):
+        return len(self.examples)
+
+    def __getitem__(self, i):
+        return self.examples[i]
+
+def word_align(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer):
+
+    def collate(examples):
+        ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt = zip(*examples)
+        ids_src = pad_sequence(ids_src, batch_first=True, padding_value=tokenizer.pad_token_id)
+        ids_tgt = pad_sequence(ids_tgt, batch_first=True, padding_value=tokenizer.pad_token_id)
+        return ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt
+
+    dataset = LineByLineTextDataset(tokenizer, args, file_path=args.data_file)
+    sampler = SequentialSampler(dataset)
+    dataloader = DataLoader(
+        dataset, sampler=sampler, batch_size=args.batch_size, collate_fn=collate
+    )
+
+    model.to(args.device)
+    model.eval()
+    tqdm_iterator = trange(dataloader.__len__(), desc="Extracting")
     with open(args.output_file, 'w') as writer:
-        for output in outputs:
-            writer.write(output)
+        for batch in dataloader:
+            with torch.no_grad():
+                ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt = batch
+                word_aligns_list = model.get_aligned_word(ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, 0, 0, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold, test=True)
+                for word_aligns in word_aligns_list:
+                    output_str = []
+                    for word_align in word_aligns:
+                        output_str.append(f'{word_align[0]}-{word_align[1]}')
+                    writer.write(' '.join(output_str)+'\n')
+                tqdm_iterator.update(len(ids_src))
 
 
 def main():
@@ -119,6 +145,7 @@ def main():
         help="Optional pretrained tokenizer name or path if not the same as model_name_or_path. If both are None, initialize a new tokenizer.",
     )
     parser.add_argument("--seed", type=int, default=42, help="random seed for initialization")
+    parser.add_argument("--batch_size", default=32, type=int)
     parser.add_argument(
         "--cache_dir",
         default='cache_dir',

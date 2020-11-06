@@ -156,6 +156,7 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
         model.eval()
         examples_src, examples_tgt, examples_srctgt, langid_srctgt, psi_examples_srctgt, psi_labels = [], [], [], [], [], []
         src_len = tgt_len = 0
+        bpe2word_map_src, bpe2word_map_tgt = [], []
         for example in examples:
             end_id = example[0][0][-1].view(-1)
 
@@ -209,23 +210,16 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
             psi_examples_srctgt.append(neg_srctgt)
             psi_labels.append(0)
 
-        guides = []
-        for example, src, tgt in zip(examples, examples_src, examples_tgt):
-            if hasattr(model, "module"):
-                print('not supporting multi-gpus yet')
-                1/0
-                guide = model.module.get_aligned_word(src.unsqueeze(0), tgt.unsqueeze(0), example[2], example[3], args.device, tokenizer, src_len, tgt_len)
-            else:
-                guide = model.get_aligned_word(src.unsqueeze(0), tgt.unsqueeze(0), example[2], example[3], args.device, tokenizer, src_len, tgt_len, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold)
-            guides.append(guide)
+            bpe2word_map_src.append(example[2])
+            bpe2word_map_tgt.append(example[3])
             
         examples_src = pad_sequence(examples_src, batch_first=True, padding_value=tokenizer.pad_token_id)
         examples_tgt = pad_sequence(examples_tgt, batch_first=True, padding_value=tokenizer.pad_token_id)
         examples_srctgt = pad_sequence(examples_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
         langid_srctgt = pad_sequence(langid_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
-        guides = torch.cat(guides)
         psi_examples_srctgt = pad_sequence(psi_examples_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
         psi_labels = torch.tensor(psi_labels)
+        guides = model.get_aligned_word(examples_src, examples_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, src_len, tgt_len, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold)
         return examples_src, examples_tgt, guides, examples_srctgt, langid_srctgt, psi_examples_srctgt, psi_labels
 
 
@@ -408,6 +402,7 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
         model.eval()
         examples_src, examples_tgt, examples_srctgt, langid_srctgt, psi_examples_srctgt, psi_labels = [], [], [], [], [], []
         src_len = tgt_len = 0
+        bpe2word_map_src, bpe2word_map_tgt = [], []
         for example in examples:
             end_id = example[0][0][-1].view(-1)
 
@@ -446,23 +441,17 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
             psi_examples_srctgt.append(neg_srctgt)
             psi_labels.append(0)
 
-        guides = []
-        for example, src, tgt in zip(examples, examples_src, examples_tgt):
-            if hasattr(model, "module"):
-                print('not supporting multi-gpus yet')
-                1/0
-                guide = model.module.get_aligned_word(src.unsqueeze(0), tgt.unsqueeze(0), example[2], example[3], args.device, tokenizer, src_len, tgt_len)
-            else:
-                guide = model.get_aligned_word(src.unsqueeze(0), tgt.unsqueeze(0), example[2], example[3], args.device, tokenizer, src_len, tgt_len, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold)
-            guides.append(guide)
+            bpe2word_map_src.append(example[2])
+            bpe2word_map_tgt.append(example[3])
+
             
         examples_src = pad_sequence(examples_src, batch_first=True, padding_value=tokenizer.pad_token_id)
         examples_tgt = pad_sequence(examples_tgt, batch_first=True, padding_value=tokenizer.pad_token_id)
         examples_srctgt = pad_sequence(examples_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
         langid_srctgt = pad_sequence(langid_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
-        guides = torch.cat(guides)
         psi_examples_srctgt = pad_sequence(psi_examples_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
         psi_labels = torch.tensor(psi_labels)
+        guides = model.get_aligned_word(examples_src, examples_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, src_len, tgt_len, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold)
         return examples_src, examples_tgt, guides, examples_srctgt, langid_srctgt, psi_examples_srctgt, psi_labels
 
     eval_sampler = SequentialSampler(eval_dataset)

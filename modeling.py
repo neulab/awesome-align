@@ -447,12 +447,10 @@ def return_extended_attention_mask(attention_mask, dtype):
         extended_attention_mask = attention_mask[:, None, None, :]
     else:
         raise ValueError(
-             "Wrong shape for input_ids (shape {}) or attention_mask (shape {})".format(
-                input_shape, attention_mask.shape
-            )
+             "Wrong shape for input_ids or attention_mask"
         )
     extended_attention_mask = extended_attention_mask.to(dtype=dtype)
-    extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
+    extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0 
     return extended_attention_mask
 
 @add_start_docstrings(
@@ -505,6 +503,7 @@ class BertModel(BertPreTrainedModel):
 
         if attention_mask is None:
             attention_mask = torch.ones(input_shape, device=device)
+            attention_mask[input_ids==0] = 0
 
         token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=device)
 
@@ -637,8 +636,7 @@ class BertForMaskedLM(BertPreTrainedModel):
         so_loss = self.guide_layer(outputs_src, outputs_tgt, inputs_src, inputs_tgt, guide=guide, extraction=extraction, softmax_threshold=softmax_threshold)
         return so_loss
 
-    def get_aligned_word(self, inputs_src, inputs_tgt, bpe2word_map_src, bpe2word_map_tgt, device, tokenizer, src_len, tgt_len, align_layer=8, extraction='softmax', softmax_threshold=0.001, test=False):
-
+    def get_aligned_word(self, inputs_src, inputs_tgt, bpe2word_map_src, bpe2word_map_tgt, device, src_len, tgt_len, align_layer=8, extraction='softmax', softmax_threshold=0.001, test=False):
         inputs_src = inputs_src.to(dtype=torch.long, device=device).clone()
         inputs_tgt = inputs_tgt.to(dtype=torch.long, device=device).clone()
 
@@ -646,33 +644,40 @@ class BertForMaskedLM(BertPreTrainedModel):
             outputs_src = self.bert(
                 inputs_src,
                 align_layer=align_layer,
-                attention_mask=None,
+                attention_mask=(inputs_src!=0),
             )
             outputs_tgt = self.bert(
                 inputs_tgt,
                 align_layer=align_layer,
-                attention_mask=None,
+                attention_mask=(inputs_tgt!=0),
             )
 
             attention_probs_inter = self.guide_layer(outputs_src, outputs_tgt, inputs_src, inputs_tgt, extraction=extraction, softmax_threshold=softmax_threshold)
             attention_probs_inter = attention_probs_inter.float()
             
-        attention_probs_inter = attention_probs_inter[0, 0, 1:-1, 1:-1]
-        word_aligns = set()
-        bpelen_src, bpelen_tgt = attention_probs_inter.size() 
+        word_aligns = []
+        attention_probs_inter = attention_probs_inter[:, 0, 1:-1, 1:-1]
+        batch_size, bpelen_src, bpelen_tgt = attention_probs_inter.size() 
 
-        for i in range(bpelen_src):
-            for j in range(bpelen_tgt):
-                if attention_probs_inter[i, j] > 0:
-                    word_aligns.add( (bpe2word_map_src[i], bpe2word_map_tgt[j]) )
-            
+        for idx, (attention, b2w_src, b2w_tgt) in enumerate(zip(attention_probs_inter, bpe2word_map_src, bpe2word_map_tgt)):
+            aligns = set()
+            len_src = min(bpelen_src, len(b2w_src))
+            len_tgt = min(bpelen_tgt, len(b2w_tgt))
+            for i in range(len_src):
+                for j in range(len_tgt):
+                    if attention[i, j] > 0:
+                        aligns.add( (b2w_src[i], b2w_tgt[j]) )
+            word_aligns.append(aligns)
+
         if test:
             return word_aligns
 
-        guide = torch.zeros(1, 1, src_len, tgt_len)
-        for i in range(bpelen_src):
-            for j in range(bpelen_tgt):
-                if (bpe2word_map_src[i], bpe2word_map_tgt[j]) in word_aligns:
-                    guide[0, 0, i+1, j+1] = 1.0
-
+        guide = torch.zeros(batch_size, 1, src_len, tgt_len)
+        for idx, (word_align, b2w_src, b2w_tgt) in enumerate(zip(word_aligns, bpe2word_map_src, bpe2word_map_tgt)):
+            len_src = min(bpelen_src, len(b2w_src))
+            len_tgt = min(bpelen_tgt, len(b2w_tgt))
+            for i in range(len_src):
+                for j in range(len_tgt):
+                    if (b2w_src[i], b2w_tgt[j]) in word_align:
+                        guide[idx, 0, i+1, j+1] = 1.0
         return guide
