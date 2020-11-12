@@ -9,7 +9,7 @@ Inputs should be *tokenized* and each line is a source language sentence and its
 
 ## Fine-tuning on parallel data
 
-If there is some parallel data available, you can fine-tune your contextualized embedding model. An example for fine-tuning multilingual BERT:
+If there is some parallel data available, you can fine-tune your contextualized embedding model. An example for fine-tuning multilingual BERT (we found that this hyper-parameter setting is pretty robust):
 
 ```bash
 TRAIN_FILE=/path/to/train/file
@@ -44,11 +44,12 @@ DATA_FILE=/path/to/data/file
 MODEL_NAME_OR_PATH=bert-base-multilingual-cased
 OUTPUT_FILE=/path/to/output/file
 
-python run_align.py \
+CUDA_VISIBLE_DEVICES=0 python run_align.py \
     --output_file=$OUTPUT_FILE \
     --model_name_or_path=$MODEL_NAME_OR_PATH \
     --data_file=$DATA_FILE \
     --extraction 'softmax' \
+    --batch_size 32 \
 ```
 
 This produces outputs in the `i-j` Pharaoh format. A pair `i-j` indicates that the <i>i</i>th word (zero-indexed) of the source sentence is aligned to the <i>j</i>th word of the target sentence.
