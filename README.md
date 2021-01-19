@@ -1,8 +1,8 @@
-# AWESOME: Aligning Word Embedding Spaces of Multilingual Encoders
+## AWESOME: Aligning Word Embedding Spaces of Multilingual Encoders
 
 `AWESOME` is a tool that can extract word alignments from multilingual BERT (mBERT) and allows you to fine-tune mBERT on parallel corpora for better alignment quality.
 
-## Basic Usage
+## Dependencies
 
 First, you need to install the dependencies:
 
@@ -101,15 +101,15 @@ You can also set `MODEL_NAME_OR_PATH` to the path of your fine-tuned model.
 The following table shows the AER scores of our models and popular statistical word aligners on five language pairs. The De-En, Fr-En, Ro-En datasets can be obtained following [this repo](https://github.com/lilt/alignment-scripts), the Ja-En data is from [this link](http://www.phontron.com/kftt/) and the Zh-En data is available at [this link](http://nlp.csai.tsinghua.edu.cn/~ly/systems/TsinghuaAligner/TsinghuaAligner.html). The best scores are in **bold**.
 
 |            | De-En  | Fr-En | Ro-En | Ja-En | Zh-En |
-| ---------- | ------- | ------- | ------- | ------- | ------- | 
+| -| ------- | ------- | ------- | ------- | ------- | 
 | [fast\_align](https://github.com/clab/fast_align) | 27.0   | 10.5    | 32.1    | 51.1     | 38.1     |
 | [Mgiza](https://github.com/moses-smt/mgiza)    | 20.6     | 5.9     | 26.4     | 48.0     | 35.1     |
 | Ours (w/o fine-tuning, softmax) | 17.4 | 5.6 | 27.9 | 45.6 | 18.1 |
-| Ours (multilingually trained w/o `--train_co`, softmax)[Download](https://drive.google.com/file/d/1IcQx6t5qtv4bdcGjjVCwXnRkpr67eisJ/view?usp=sharing) | 15.2 | **4.1** | 22.6 | **37.4** | **13.4** |
-| Ours (multilingually trained w/ `--train_co`, softmax)[Download](https://drive.google.com/file/d/1IluQED1jb0rjITJtyj4lNMPmaRFyMslg/view?usp=sharing) |  **15.1** | 4.5 | **20.7** | 38.4 | 14.5 |
+| Ours (multilingually trained w/o `--train_co`, softmax) [[Download]](https://drive.google.com/file/d/1IcQx6t5qtv4bdcGjjVCwXnRkpr67eisJ/view?usp=sharing) | 15.2 | **4.1** | 22.6 | **37.4** | **13.4** |
+| Ours (multilingually trained w/ `--train_co`, softmax) [[Download]](https://drive.google.com/file/d/1IluQED1jb0rjITJtyj4lNMPmaRFyMslg/view?usp=sharing) |  **15.1** | 4.5 | **20.7** | 38.4 | 14.5 |
 
 
-## Citation/References
+## Citation
 
 If you use our tool, we'd appreciate if you cite the following paper:
 
