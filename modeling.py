@@ -1,6 +1,7 @@
 # coding=utf-8
 # Copyright 2018 The Google AI Language Team Authors and The HuggingFace Inc. team.
 # Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
+# Modifications copyright (C) 2020 Zi-Yi Dou
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -536,10 +537,13 @@ class BertGuideHead(nn.Module):
         inputs_src, inputs_tgt,
         guide=None,
         extraction='softmax', softmax_threshold=0.001,
+        train_so=True, train_co=False,
     ):
         #mask
         attention_mask_src = ( (inputs_src==0) + (inputs_src==101) + (inputs_src==102) )
         attention_mask_tgt = ( (inputs_tgt==0) + (inputs_tgt==101) + (inputs_tgt==102) )
+        len_src = torch.sum(1-attention_mask_src, -1)
+        len_tgt = torch.sum(1-attention_mask_tgt, -1)
         attention_mask_src = return_extended_attention_mask(1-attention_mask_src.float(), hidden_states_src.dtype)
         attention_mask_tgt = return_extended_attention_mask(1-attention_mask_tgt.float(), hidden_states_src.dtype)
 
@@ -563,14 +567,22 @@ class BertGuideHead(nn.Module):
             threshold = softmax_threshold if extraction == 'softmax' else 0
             return (attention_probs_src>threshold)*(attention_probs_tgt>threshold)
 
-        so_loss_src = torch.sum(torch.sum (attention_probs_src*guide, -1), -1).view(-1)
-        so_loss_tgt = torch.sum(torch.sum (attention_probs_tgt*guide, -1), -1).view(-1)
-        denom_src = torch.sum(torch.sum(attention_mask_src == 0, -1), -1).view(-1)
-        denom_tgt = torch.sum(torch.sum(attention_mask_tgt == 0, -1), -1).view(-1)
+        so_loss = 0
+        if train_so:
+            so_loss_src = torch.sum(torch.sum (attention_probs_src*guide, -1), -1).view(-1)
+            so_loss_tgt = torch.sum(torch.sum (attention_probs_tgt*guide, -1), -1).view(-1)
 
-        so_loss = 0.5*(so_loss_src/denom_src.float() + so_loss_tgt/denom_tgt.float())
-        so_loss = -torch.mean(so_loss)
-        return so_loss
+            so_loss = so_loss_src/mask_src.float() + so_loss_tgt/mask_tgt.float()
+            so_loss = -torch.mean(so_loss)
+
+        co_loss = 0
+        if train_co:
+            min_len = torch.min(len_src, len_tgt).float()
+            trace = torch.matmul(attention_probs_src, (attention_probs_tgt).transpose(-1, -2)).squeeze(1)
+            trace = torch.einsum('bii->b', trace)
+            co_loss = -torch.mean(trace/min_len)
+
+        return so_loss+co_loss
 
 
 @add_start_docstrings("""Bert Model with a `language modeling` head on top. """, BERT_START_DOCSTRING)
@@ -598,6 +610,8 @@ class BertForMaskedLM(BertPreTrainedModel):
         position_ids1=None,
         position_ids2=None,
         labels_psi=None,
+        train_so=True,
+        train_co=False,
     ):
 
         loss_fct=CrossEntropyLoss(reduction='none')
@@ -633,7 +647,7 @@ class BertForMaskedLM(BertPreTrainedModel):
             position_ids=position_ids2,
         )
 
-        so_loss = self.guide_layer(outputs_src, outputs_tgt, inputs_src, inputs_tgt, guide=guide, extraction=extraction, softmax_threshold=softmax_threshold)
+        so_loss = self.guide_layer(outputs_src, outputs_tgt, inputs_src, inputs_tgt, guide=guide, extraction=extraction, softmax_threshold=softmax_threshold, train_so=train_so, train_co=train_co)
         return so_loss
 
     def get_aligned_word(self, inputs_src, inputs_tgt, bpe2word_map_src, bpe2word_map_tgt, device, src_len, tgt_len, align_layer=8, extraction='softmax', softmax_threshold=0.001, test=False):

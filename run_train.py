@@ -1,6 +1,7 @@
 # coding=utf-8
 # Copyright 2018 The Google AI Language Team Authors and The HuggingFace Inc. team.
 # Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
+# Modifications copyright (C) 2020, Zi-Yi Dou
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -154,7 +155,7 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
     args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
     def collate(examples):
         model.eval()
-        examples_src, examples_tgt, examples_srctgt, langid_srctgt, psi_examples_srctgt, psi_labels = [], [], [], [], [], []
+        examples_src, examples_tgt, examples_srctgt, examples_tgtsrc, langid_srctgt, langid_tgtsrc, psi_examples_srctgt, psi_labels = [], [], [], [], [], [], [], []
         src_len = tgt_len = 0
         bpe2word_map_src, bpe2word_map_tgt = [], []
         for example in examples:
@@ -176,14 +177,15 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
             src_len = max(src_len, len(src_id))
             tgt_len = max(tgt_len, len(tgt_id))
 
-            if random.random()> 0.5:
-                srctgt = torch.cat( [half_src_id, half_tgt_id] )
-                langid = torch.cat([ torch.ones_like(half_src_id), torch.ones_like(half_tgt_id)*2] )
-            else:
-                srctgt = torch.cat( [half_tgt_id, half_src_id])
-                langid = torch.cat([ torch.ones_like(half_tgt_id), torch.ones_like(half_src_id)*2] )
+            srctgt = torch.cat( [half_src_id, half_tgt_id] )
+            langid = torch.cat([ torch.ones_like(half_src_id), torch.ones_like(half_tgt_id)*2] )
             examples_srctgt.append(srctgt)
             langid_srctgt.append(langid)
+
+            tgtsrc = torch.cat( [half_tgt_id, half_src_id])
+            langid = torch.cat([ torch.ones_like(half_tgt_id), torch.ones_like(half_src_id)*2] )
+            examples_tgtsrc.append(tgtsrc)
+            langid_tgtsrc.append(langid)
 
             # [neg, neg] pair
             neg_half_src_id = example[-2][0][:half_block_size]
@@ -217,10 +219,12 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
         examples_tgt = pad_sequence(examples_tgt, batch_first=True, padding_value=tokenizer.pad_token_id)
         examples_srctgt = pad_sequence(examples_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
         langid_srctgt = pad_sequence(langid_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
+        examples_tgtsrc = pad_sequence(examples_tgtsrc, batch_first=True, padding_value=tokenizer.pad_token_id)
+        langid_tgtsrc = pad_sequence(langid_tgtsrc, batch_first=True, padding_value=tokenizer.pad_token_id)
         psi_examples_srctgt = pad_sequence(psi_examples_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
         psi_labels = torch.tensor(psi_labels)
         guides = model.get_aligned_word(examples_src, examples_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, src_len, tgt_len, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold)
-        return examples_src, examples_tgt, guides, examples_srctgt, langid_srctgt, psi_examples_srctgt, psi_labels
+        return examples_src, examples_tgt, guides, examples_srctgt, langid_srctgt, examples_tgtsrc, langid_tgtsrc, psi_examples_srctgt, psi_labels
 
 
     train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
@@ -330,18 +334,24 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
                 tr_loss = backward_loss(loss, tr_loss)
 
             if args.train_tlm:
-                inputs_srctgt, labels_srctgt = mask_tokens(batch[3], tokenizer, args, batch[4], 1)
-                inputs_srctgt, labels_srctgt = inputs_srctgt.to(args.device), labels_srctgt.to(args.device)
-                loss = model(inputs_src=inputs_srctgt, labels_src=labels_srctgt)
-                tr_loss = backward_loss(loss, tr_loss)
+                rand_ids = [0, 1]
+                if not args.train_tlm_full:
+                    rand_ids = [int(random.random() > 0.5)]
+                for rand_id in rand_ids:
+                    select_srctgt = batch[int(3+rand_id*2)]
+                    select_langid = batch[int(4+rand_id*2)]
+                    inputs_srctgt, labels_srctgt = mask_tokens(select_srctgt, tokenizer, args, select_langid, 1)
+                    inputs_srctgt, labels_srctgt = inputs_srctgt.to(args.device), labels_srctgt.to(args.device)
+                    loss = model(inputs_src=inputs_srctgt, labels_src=labels_srctgt)
+                    tr_loss = backward_loss(loss, tr_loss)
 
-                inputs_srctgt, labels_srctgt = mask_tokens(batch[3], tokenizer, args, batch[4], 2)
-                inputs_srctgt, labels_srctgt = inputs_srctgt.to(args.device), labels_srctgt.to(args.device)
-                loss = model(inputs_src=inputs_srctgt, labels_src=labels_srctgt)
-                tr_loss = backward_loss(loss, tr_loss)
+                    inputs_srctgt, labels_srctgt = mask_tokens(select_srctgt, tokenizer, args, select_langid, 2)
+                    inputs_srctgt, labels_srctgt = inputs_srctgt.to(args.device), labels_srctgt.to(args.device)
+                    loss = model(inputs_src=inputs_srctgt, labels_src=labels_srctgt)
+                    tr_loss = backward_loss(loss, tr_loss)
 
             if args.train_psi:
-                loss = model(inputs_src=batch[5].to(args.device), labels_psi=batch[6].to(args.device), align_layer=args.align_layer+1)
+                loss = model(inputs_src=batch[7].to(args.device), labels_psi=batch[8].to(args.device), align_layer=args.align_layer+1)
                 tr_loss = backward_loss(loss, tr_loss)
 
 
@@ -480,12 +490,12 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
 
     for batch in tqdm(eval_dataloader, desc="Evaluating"):
         with torch.no_grad():
-            if args.train_so:
+            if args.train_so or args.train_co:
                 inputs_src, inputs_tgt = batch[0].clone(), batch[1].clone()
                 inputs_src, inputs_tgt = inputs_src.to(args.device), inputs_tgt.to(args.device)
                 attention_mask_src, attention_mask_tgt = (inputs_src!=0), (inputs_tgt!=0)
                 guide = batch[2].to(args.device)
-                loss = model(inputs_src=inputs_src, inputs_tgt=inputs_tgt, attention_mask_src=attention_mask_src, attention_mask_tgt=attention_mask_tgt, guide=guide, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold)
+                loss = model(inputs_src=inputs_src, inputs_tgt=inputs_tgt, attention_mask_src=attention_mask_src, attention_mask_tgt=attention_mask_tgt, guide=guide, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold, train_so=args.train_so, train_co=args.train_co)
                 eval_loss = post_loss(loss, eval_loss)
 
             if args.train_mlm:
@@ -547,13 +557,15 @@ def main():
     # Training objectives
     parser.add_argument("--train_mlm", action="store_true")
     parser.add_argument("--train_tlm", action="store_true")
+    parser.add_argument("--train_tlm_full", action="store_true")
     parser.add_argument("--train_so", action="store_true")
     parser.add_argument("--train_psi", action="store_true")
+    parser.add_argument("--train_co", action="store_true")
     # Other parameters
     parser.add_argument("--cache_data", action="store_true", help='if cache the dataset')
     parser.add_argument("--align_layer", type=int, default=8, help="layer for alignment extraction")
     parser.add_argument(
-        "--extraction", default='softmax', type=str, help='softmax or entmax15'
+        "--extraction", default='softmax', type=str, choices=['softmax', 'entmax'], help='softmax or entmax'
     )
     parser.add_argument(
         "--softmax_threshold", type=float, default=0.001

@@ -1,6 +1,7 @@
 # coding=utf-8
 # Copyright 2018 The Google AI Language Team Authors and The HuggingFace Inc. team.
 # Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
+# Modifications copyright (C) 2020 Zi-Yi Dou
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -92,7 +93,7 @@ def word_align(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer):
 
     model.to(args.device)
     model.eval()
-    tqdm_iterator = trange(dataloader.__len__(), desc="Extracting")
+    tqdm_iterator = trange(dataset.__len__(), desc="Extracting")
     with open(args.output_file, 'w') as writer:
         for batch in dataloader:
             with torch.no_grad():

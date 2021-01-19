@@ -1,7 +1,14 @@
-# NeuAligner
+# AWESOME: Aligning Word Embedding Spaces of Multilingual Encoders
 
-NeuAligner is a tool that can extract word alignments from contextualized word embeddings and allows you to fine-tune contextualized embeddings on parallel corpora for word alignment.
+`AWESOME` is a tool that can extract word alignments from multilingual BERT (mBERT) and allows you to fine-tune mBERT on parallel corpora for better alignment quality.
 
+## Basic Usage
+
+First, you need to install the dependencies:
+
+```bash
+pip install -r requirements.txt
+```
 
 ## Input format
 
@@ -9,7 +16,9 @@ Inputs should be *tokenized* and each line is a source language sentence and its
 
 ## Fine-tuning on parallel data
 
-If there is some parallel data available, you can fine-tune your contextualized embedding model. An example for fine-tuning multilingual BERT (we found that this hyper-parameter setting is pretty robust):
+If there is parallel data available, you can fine-tune embedding models on that data.
+
+Here is an example of fine-tuning mBERT that balances well between efficiency and effectiveness:
 
 ```bash
 TRAIN_FILE=/path/to/train/file
@@ -35,6 +44,37 @@ CUDA_VISIBLE_DEVICES=0 python run_train.py \
     --overwrite_output_dir \
 ```
 
+You can also fine-tune the model a bit longer with more training objectives for better quality:
+
+```bash
+TRAIN_FILE=/path/to/train/file
+EVAL_FILE=/path/to/eval/file
+OUTPUT_DIR=/path/to/output/directory
+
+CUDA_VISIBLE_DEVICES=0 python run_train.py \
+    --output_dir=$OUTPUT_DIR \
+    --model_name_or_path=bert-base-multilingual-cased \
+    --extraction 'softmax' \
+    --do_train \
+    --train_mlm \
+    --train_tlm \
+    --train_tlm_full \
+    --train_so \
+    --train_psi \
+    --train_data_file=$TRAIN_FILE \
+    --per_gpu_train_batch_size 2 \
+    --gradient_accumulation_steps 4 \
+    --num_train_epochs 1 \
+    --learning_rate 2e-5 \
+    --save_steps 10000 \
+    --max_steps 50000 \
+    --do_eval \
+    --eval_data_file=$EVAL_FILE \
+    --overwrite_output_dir \
+```
+
+If you want high alignment recalls, you can turn on the `--train_co` option, yet the alignment precisions may drop.
+
 ## Extracting alignments
 
 Here is an example of extracting word alignments from multilingual BERT:
@@ -56,6 +96,33 @@ This produces outputs in the `i-j` Pharaoh format. A pair `i-j` indicates that t
 
 You can also set `MODEL_NAME_OR_PATH` to the path of your fine-tuned model.
 
+## Model performance
+
+The following table shows the AER scores of our models and popular statistical word aligners on five language pairs. The De-En, Fr-En, Ro-En datasets can be obtained following [this repo](https://github.com/lilt/alignment-scripts), the Ja-En data is from [this link](http://www.phontron.com/kftt/) and the Zh-En data is available at [this link](http://nlp.csai.tsinghua.edu.cn/~ly/systems/TsinghuaAligner/TsinghuaAligner.html). The best scores are in **bold**.
+
+|            | De-En  | Fr-En | Ro-En | Ja-En | Zh-En |
+| ---------- | ------- | ------- | ------- | ------- | ------- | 
+| [fast\_align](https://github.com/clab/fast_align) | 27.0   | 10.5    | 32.1    | 51.1     | 38.1     |
+| [Mgiza](https://github.com/moses-smt/mgiza)    | 20.6     | 5.9     | 26.4     | 48.0     | 35.1     |
+| Ours (w/o fine-tuning, softmax) | 17.4 | 5.6 | 27.9 | 45.6 | 18.1 |
+| Ours (multilingually trained w/o `--train_co`, softmax)[Download](https://drive.google.com/file/d/1IcQx6t5qtv4bdcGjjVCwXnRkpr67eisJ/view?usp=sharing) | 15.2 | **4.1** | 22.6 | **37.4** | **13.4** |
+| Ours (multilingually trained w/ `--train_co`, softmax)[Download](https://drive.google.com/file/d/1IluQED1jb0rjITJtyj4lNMPmaRFyMslg/view?usp=sharing) |  **15.1** | 4.5 | **20.7** | 38.4 | 14.5 |
+
+
+## Citation/References
+
+If you use our tool, we'd appreciate if you cite the following paper:
+
+```
+@inproceedings{dou2021word,
+  title={Word Alignment by Fine-tuning Embeddings on Parallel Corpora},
+  author={Dou, Zi-Yi and Neubig, Graham},
+  booktitle={Conference of the European Chapter of the Association for Computational Linguistics (EACL)},
+  year={2021}
+}
+```
+
+
 ## Acknowledgements
 
-Some of the code is borrowed from [HuggingFace Transformers](https://github.com/huggingface/transformers).
+Some of the code is borrowed from [HuggingFace Transformers](https://github.com/huggingface/transformers) and the entmax implementation is from [this repo](https://github.com/deep-spin/entmax).
