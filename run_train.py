@@ -517,7 +517,7 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
                 if not args.train_tlm_full:
                     select_ids = [0]
                 for select_id in select_ids:
-                    for lang_id in [0, 1]:
+                    for lang_id in [1, 2]:
                         inputs_srctgt, labels_srctgt = mask_tokens(batch[3+select_id*2], tokenizer, args, batch[4+select_id*2], lang_id)
                         inputs_srctgt, labels_srctgt = inputs_srctgt.to(args.device), labels_srctgt.to(args.device)
                         loss = model(inputs_src=inputs_srctgt, labels_src=labels_srctgt)
