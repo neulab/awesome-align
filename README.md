@@ -2,7 +2,7 @@
 
 `AWESOME` is a tool that can extract word alignments from multilingual BERT (mBERT) and allows you to fine-tune mBERT on parallel corpora for better alignment quality.
 
-## Dependencies
+### Dependencies
 
 First, you need to install the dependencies:
 
@@ -10,11 +10,11 @@ First, you need to install the dependencies:
 pip install -r requirements.txt
 ```
 
-## Input format
+### Input format
 
 Inputs should be *tokenized* and each line is a source language sentence and its target language translation, separated by (` ||| `). You can see some examples in the `examples` folder.
 
-## Fine-tuning on parallel data
+### Fine-tuning on parallel data
 
 If there is parallel data available, you can fine-tune embedding models on that data.
 
@@ -75,7 +75,7 @@ CUDA_VISIBLE_DEVICES=0 python run_train.py \
 
 If you want high alignment recalls, you can turn on the `--train_co` option, yet the alignment precisions may drop.
 
-## Extracting alignments
+### Extracting alignments
 
 Here is an example of extracting word alignments from multilingual BERT:
 
@@ -96,7 +96,7 @@ This produces outputs in the `i-j` Pharaoh format. A pair `i-j` indicates that t
 
 You can also set `MODEL_NAME_OR_PATH` to the path of your fine-tuned model.
 
-## Model performance
+### Model performance
 
 The following table shows the AER scores of our models and popular statistical word aligners on five language pairs. The De-En, Fr-En, Ro-En datasets can be obtained following [this repo](https://github.com/lilt/alignment-scripts), the Ja-En data is from [this link](http://www.phontron.com/kftt/) and the Zh-En data is available at [this link](http://nlp.csai.tsinghua.edu.cn/~ly/systems/TsinghuaAligner/TsinghuaAligner.html). The best scores are in **bold**.
 
@@ -109,7 +109,7 @@ The following table shows the AER scores of our models and popular statistical w
 | Ours (multilingually trained w/ `--train_co`, softmax) [[Download]](https://drive.google.com/file/d/1IluQED1jb0rjITJtyj4lNMPmaRFyMslg/view?usp=sharing) |  **15.1** | 4.5 | **20.7** | 38.4 | 14.5 |
 
 
-## Citation
+### Citation
 
 If you use our tool, we'd appreciate if you cite the following paper:
 
@@ -123,6 +123,6 @@ If you use our tool, we'd appreciate if you cite the following paper:
 ```
 
 
-## Acknowledgements
+### Acknowledgements
 
 Some of the code is borrowed from [HuggingFace Transformers](https://github.com/huggingface/transformers) and the entmax implementation is from [this repo](https://github.com/deep-spin/entmax).
