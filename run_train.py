@@ -340,15 +340,11 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
                 for rand_id in rand_ids:
                     select_srctgt = batch[int(3+rand_id*2)]
                     select_langid = batch[int(4+rand_id*2)]
-                    inputs_srctgt, labels_srctgt = mask_tokens(select_srctgt, tokenizer, args, select_langid, 1)
-                    inputs_srctgt, labels_srctgt = inputs_srctgt.to(args.device), labels_srctgt.to(args.device)
-                    loss = model(inputs_src=inputs_srctgt, labels_src=labels_srctgt)
-                    tr_loss = backward_loss(loss, tr_loss)
-
-                    inputs_srctgt, labels_srctgt = mask_tokens(select_srctgt, tokenizer, args, select_langid, 2)
-                    inputs_srctgt, labels_srctgt = inputs_srctgt.to(args.device), labels_srctgt.to(args.device)
-                    loss = model(inputs_src=inputs_srctgt, labels_src=labels_srctgt)
-                    tr_loss = backward_loss(loss, tr_loss)
+                    for lang_id in [1, 2]:
+                        inputs_srctgt, labels_srctgt = mask_tokens(select_srctgt, tokenizer, args, select_langid, lang_id)
+                        inputs_srctgt, labels_srctgt = inputs_srctgt.to(args.device), labels_srctgt.to(args.device)
+                        loss = model(inputs_src=inputs_srctgt, labels_src=labels_srctgt)
+                        tr_loss = backward_loss(loss, tr_loss)
 
             if args.train_psi:
                 loss = model(inputs_src=batch[7].to(args.device), labels_psi=batch[8].to(args.device), align_layer=args.align_layer+1)
@@ -410,7 +406,7 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
     # Note that DistributedSampler samples randomly
     def collate(examples):
         model.eval()
-        examples_src, examples_tgt, examples_srctgt, langid_srctgt, psi_examples_srctgt, psi_labels = [], [], [], [], [], []
+        examples_src, examples_tgt, examples_srctgt, examples_tgtsrc, langid_srctgt, langid_tgtsrc, psi_examples_srctgt, psi_labels = [], [], [], [], [], [], [], []
         src_len = tgt_len = 0
         bpe2word_map_src, bpe2word_map_tgt = [], []
         for example in examples:
@@ -437,6 +433,11 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
             examples_srctgt.append(srctgt)
             langid_srctgt.append(langid)
 
+            tgtsrc = torch.cat( [half_tgt_id, half_src_id] )
+            langid = torch.cat([ torch.ones_like(half_tgt_id), torch.ones_like(half_src_id)*2] )
+            examples_tgtsrc.append(tgtsrc)
+            langid_tgtsrc.append(langid)
+
             # [neg, neg] pair
             neg_half_src_id = example[-2][0][:half_block_size]
             neg_half_src_id = torch.cat([neg_half_src_id[:-1], end_id])
@@ -459,10 +460,12 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
         examples_tgt = pad_sequence(examples_tgt, batch_first=True, padding_value=tokenizer.pad_token_id)
         examples_srctgt = pad_sequence(examples_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
         langid_srctgt = pad_sequence(langid_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
+        examples_tgtsrc = pad_sequence(examples_tgtsrc, batch_first=True, padding_value=tokenizer.pad_token_id)
+        langid_tgtsrc = pad_sequence(langid_tgtsrc, batch_first=True, padding_value=tokenizer.pad_token_id)
         psi_examples_srctgt = pad_sequence(psi_examples_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
         psi_labels = torch.tensor(psi_labels)
         guides = model.get_aligned_word(examples_src, examples_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, src_len, tgt_len, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold)
-        return examples_src, examples_tgt, guides, examples_srctgt, langid_srctgt, psi_examples_srctgt, psi_labels
+        return examples_src, examples_tgt, guides, examples_srctgt, langid_srctgt, examples_tgtsrc, langid_tgtsrc, psi_examples_srctgt, psi_labels
 
     eval_sampler = SequentialSampler(eval_dataset)
     eval_dataloader = DataLoader(
@@ -510,18 +513,18 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
                 eval_loss = post_loss(loss, eval_loss)
 
             if args.train_tlm:
-                inputs_srctgt, labels_srctgt = mask_tokens(batch[3], tokenizer, args, batch[4], 1)
-                inputs_srctgt, labels_srctgt = inputs_srctgt.to(args.device), labels_srctgt.to(args.device)
-                loss = model(inputs_src=inputs_srctgt, labels_src=labels_srctgt)
-                eval_loss = post_loss(loss, eval_loss)
-
-                inputs_srctgt, labels_srctgt = mask_tokens(batch[3], tokenizer, args, batch[4], 2)
-                inputs_srctgt, labels_srctgt = inputs_srctgt.to(args.device), labels_srctgt.to(args.device)
-                loss = model(inputs_src=inputs_srctgt, labels_src=labels_srctgt)
-                eval_loss = post_loss(loss, eval_loss)
+                select_ids = [0, 1]
+                if not args.train_tlm_full:
+                    select_ids = [0]
+                for select_id in select_ids:
+                    for lang_id in [0, 1]:
+                        inputs_srctgt, labels_srctgt = mask_tokens(batch[3+select_id*2], tokenizer, args, batch[4+select_id*2], lang_id)
+                        inputs_srctgt, labels_srctgt = inputs_srctgt.to(args.device), labels_srctgt.to(args.device)
+                        loss = model(inputs_src=inputs_srctgt, labels_src=labels_srctgt)
+                        eval_loss = post_loss(loss, eval_loss)
 
             if args.train_psi:
-                loss = model(inputs_src=batch[5].to(args.device), labels_psi=batch[6].to(args.device))
+                loss = model(inputs_src=batch[7].to(args.device), labels_psi=batch[8].to(args.device))
                 eval_loss = post_loss(loss, eval_loss)
 
         nb_eval_steps += 1

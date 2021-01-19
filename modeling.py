@@ -572,7 +572,7 @@ class BertGuideHead(nn.Module):
             so_loss_src = torch.sum(torch.sum (attention_probs_src*guide, -1), -1).view(-1)
             so_loss_tgt = torch.sum(torch.sum (attention_probs_tgt*guide, -1), -1).view(-1)
 
-            so_loss = so_loss_src/mask_src.float() + so_loss_tgt/mask_tgt.float()
+            so_loss = so_loss_src/len_src.float() + so_loss_tgt/len_tgt.float()
             so_loss = -torch.mean(so_loss)
 
         co_loss = 0
