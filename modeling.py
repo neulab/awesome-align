@@ -542,8 +542,8 @@ class BertGuideHead(nn.Module):
         #mask
         attention_mask_src = ( (inputs_src==0) + (inputs_src==101) + (inputs_src==102) )
         attention_mask_tgt = ( (inputs_tgt==0) + (inputs_tgt==101) + (inputs_tgt==102) )
-        len_src = torch.sum(1-attention_mask_src, -1)
-        len_tgt = torch.sum(1-attention_mask_tgt, -1)
+        len_src = torch.sum(1-attention_mask_src.float(), -1)
+        len_tgt = torch.sum(1-attention_mask_tgt.float(), -1)
         attention_mask_src = return_extended_attention_mask(1-attention_mask_src.float(), hidden_states_src.dtype)
         attention_mask_tgt = return_extended_attention_mask(1-attention_mask_tgt.float(), hidden_states_src.dtype)
 
@@ -675,12 +675,9 @@ class BertForMaskedLM(BertPreTrainedModel):
 
         for idx, (attention, b2w_src, b2w_tgt) in enumerate(zip(attention_probs_inter, bpe2word_map_src, bpe2word_map_tgt)):
             aligns = set()
-            len_src = min(bpelen_src, len(b2w_src))
-            len_tgt = min(bpelen_tgt, len(b2w_tgt))
-            for i in range(len_src):
-                for j in range(len_tgt):
-                    if attention[i, j] > 0:
-                        aligns.add( (b2w_src[i], b2w_tgt[j]) )
+            non_zeros = torch.nonzero(attention)
+            for i, j in non_zeros:
+                aligns.add( (b2w_src[i], b2w_tgt[j]) )
             word_aligns.append(aligns)
 
         if test:
