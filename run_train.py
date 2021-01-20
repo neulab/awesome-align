@@ -314,12 +314,12 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
 
             model.train()
 
-            if args.train_so:
+            if args.train_so or args.train_co:
                 inputs_src, inputs_tgt = batch[0].clone(), batch[1].clone()
                 inputs_src, inputs_tgt = inputs_src.to(args.device), inputs_tgt.to(args.device)
                 attention_mask_src, attention_mask_tgt = (inputs_src!=0), (inputs_tgt!=0)
                 guide = batch[2].to(args.device)
-                loss = model(inputs_src=inputs_src, inputs_tgt=inputs_tgt, attention_mask_src=attention_mask_src, attention_mask_tgt=attention_mask_tgt, guide=guide, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold)
+                loss = model(inputs_src=inputs_src, inputs_tgt=inputs_tgt, attention_mask_src=attention_mask_src, attention_mask_tgt=attention_mask_tgt, guide=guide, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold, train_so=args.train_so, train_co=args.train_co)
                 tr_loss = backward_loss(loss, tr_loss)
 
             if args.train_mlm:

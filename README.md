@@ -1,6 +1,6 @@
 ## AWESOME: Aligning Word Embedding Spaces of Multilingual Encoders
 
-`AWESOME` is a tool that can extract word alignments from multilingual BERT (mBERT) and allows you to fine-tune mBERT on parallel corpora for better alignment quality.
+`awesome-align`` is a tool that can extract word alignments from multilingual BERT (mBERT) and allows you to fine-tune mBERT on parallel corpora for better alignment quality.
 
 ### Dependencies
 
@@ -13,6 +13,27 @@ pip install -r requirements.txt
 ### Input format
 
 Inputs should be *tokenized* and each line is a source language sentence and its target language translation, separated by (` ||| `). You can see some examples in the `examples` folder.
+
+### Extracting alignments
+
+Here is an example of extracting word alignments from multilingual BERT:
+
+```bash
+DATA_FILE=/path/to/data/file
+MODEL_NAME_OR_PATH=bert-base-multilingual-cased
+OUTPUT_FILE=/path/to/output/file
+
+CUDA_VISIBLE_DEVICES=0 python run_align.py \
+    --output_file=$OUTPUT_FILE \
+    --model_name_or_path=$MODEL_NAME_OR_PATH \
+    --data_file=$DATA_FILE \
+    --extraction 'softmax' \
+    --batch_size 32 \
+```
+
+This produces outputs in the `i-j` Pharaoh format. A pair `i-j` indicates that the <i>i</i>th word (zero-indexed) of the source sentence is aligned to the <i>j</i>th word of the target sentence.
+
+You can also set `MODEL_NAME_OR_PATH` to the path of your fine-tuned model as shown below.
 
 ### Fine-tuning on parallel data
 
@@ -37,11 +58,10 @@ CUDA_VISIBLE_DEVICES=0 python run_train.py \
     --gradient_accumulation_steps 4 \
     --num_train_epochs 1 \
     --learning_rate 2e-5 \
-    --save_steps 2000 \
+    --save_steps 4000 \
     --max_steps 20000 \
     --do_eval \
     --eval_data_file=$EVAL_FILE \
-    --overwrite_output_dir \
 ```
 
 You can also fine-tune the model a bit longer with more training objectives for better quality:
@@ -67,46 +87,24 @@ CUDA_VISIBLE_DEVICES=0 python run_train.py \
     --num_train_epochs 1 \
     --learning_rate 2e-5 \
     --save_steps 10000 \
-    --max_steps 50000 \
+    --max_steps 40000 \
     --do_eval \
     --eval_data_file=$EVAL_FILE \
-    --overwrite_output_dir \
 ```
 
-If you want high alignment recalls, you can turn on the `--train_co` option, yet the alignment precisions may drop.
-
-### Extracting alignments
-
-Here is an example of extracting word alignments from multilingual BERT:
-
-```bash
-DATA_FILE=/path/to/data/file
-MODEL_NAME_OR_PATH=bert-base-multilingual-cased
-OUTPUT_FILE=/path/to/output/file
-
-CUDA_VISIBLE_DEVICES=0 python run_align.py \
-    --output_file=$OUTPUT_FILE \
-    --model_name_or_path=$MODEL_NAME_OR_PATH \
-    --data_file=$DATA_FILE \
-    --extraction 'softmax' \
-    --batch_size 32 \
-```
-
-This produces outputs in the `i-j` Pharaoh format. A pair `i-j` indicates that the <i>i</i>th word (zero-indexed) of the source sentence is aligned to the <i>j</i>th word of the target sentence.
-
-You can also set `MODEL_NAME_OR_PATH` to the path of your fine-tuned model.
+If you want high alignment recalls, you can turn on the `--train_co` option, but note that the alignment precisions may drop.
 
 ### Model performance
 
-The following table shows the AER scores of our models and popular statistical word aligners on five language pairs. The De-En, Fr-En, Ro-En datasets can be obtained following [this repo](https://github.com/lilt/alignment-scripts), the Ja-En data is from [this link](http://www.phontron.com/kftt/) and the Zh-En data is available at [this link](http://nlp.csai.tsinghua.edu.cn/~ly/systems/TsinghuaAligner/TsinghuaAligner.html). The best scores are in **bold**.
+The following table shows the alignment error rates (AERs) of our models and popular statistical word aligners on five language pairs. The De-En, Fr-En, Ro-En datasets can be obtained following [this repo](https://github.com/lilt/alignment-scripts), the Ja-En data is from [this link](http://www.phontron.com/kftt/) and the Zh-En data is available at [this link](http://nlp.csai.tsinghua.edu.cn/~ly/systems/TsinghuaAligner/TsinghuaAligner.html). The best scores are in **bold**.
 
 |            | De-En | Fr-En | Ro-En | Ja-En | Zh-En |
 | -| ------- | ------- | ------- | ------- | ------- | 
 | [fast\_align](https://github.com/clab/fast_align) | 27.0 | 10.5 | 32.1 | 51.1 | 38.1 |
 | [Mgiza](https://github.com/moses-smt/mgiza)    | 20.6 | 5.9 | 26.4 | 48.0 | 35.1 |
 | Ours (w/o fine-tuning, softmax) | 17.4 | 5.6 | 27.9 | 45.6 | 18.1 |
-| Ours (multilingually trained <br/>  w/o `--train_co`, softmax) [[Download]](https://drive.google.com/file/d/1IcQx6t5qtv4bdcGjjVCwXnRkpr67eisJ/view?usp=sharing) | 15.2 | **4.1** | 22.6 | **37.4** | **13.4** |
-| Ours (multilingually trained <br/>  w/ `--train_co`, softmax) [[Download]](https://drive.google.com/file/d/1IluQED1jb0rjITJtyj4lNMPmaRFyMslg/view?usp=sharing) |  **15.1** | 4.5 | **20.7** | 38.4 | 14.5 |
+| Ours (multilingually fine-tuned <br/>  w/o `--train_co`, softmax) [[Download]](https://drive.google.com/file/d/1IcQx6t5qtv4bdcGjjVCwXnRkpr67eisJ/view?usp=sharing) | 15.2 | **4.1** | 22.6 | **37.4** | **13.4** |
+| Ours (multilingually fine-tuned <br/>  w/ `--train_co`, softmax) [[Download]](https://drive.google.com/file/d/1IluQED1jb0rjITJtyj4lNMPmaRFyMslg/view?usp=sharing) |  **15.1** | 4.5 | **20.7** | 38.4 | 14.5 |
 
 
 ### Citation
