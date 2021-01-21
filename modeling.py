@@ -540,12 +540,12 @@ class BertGuideHead(nn.Module):
         train_so=True, train_co=False,
     ):
         #mask
-        attention_mask_src = ( (inputs_src==0) + (inputs_src==101) + (inputs_src==102) )
-        attention_mask_tgt = ( (inputs_tgt==0) + (inputs_tgt==101) + (inputs_tgt==102) )
-        len_src = torch.sum(1-attention_mask_src.float(), -1)
-        len_tgt = torch.sum(1-attention_mask_tgt.float(), -1)
-        attention_mask_src = return_extended_attention_mask(1-attention_mask_src.float(), hidden_states_src.dtype)
-        attention_mask_tgt = return_extended_attention_mask(1-attention_mask_tgt.float(), hidden_states_src.dtype)
+        attention_mask_src = ( (inputs_src==0) + (inputs_src==101) + (inputs_src==102) ).float()
+        attention_mask_tgt = ( (inputs_tgt==0) + (inputs_tgt==101) + (inputs_tgt==102) ).float()
+        len_src = torch.sum(1-attention_mask_src, -1)
+        len_tgt = torch.sum(1-attention_mask_tgt, -1)
+        attention_mask_src = return_extended_attention_mask(1-attention_mask_src, hidden_states_src.dtype)
+        attention_mask_tgt = return_extended_attention_mask(1-attention_mask_tgt, hidden_states_src.dtype)
 
         #qkv
         query_src = self.transpose_for_scores(hidden_states_src)
@@ -572,12 +572,12 @@ class BertGuideHead(nn.Module):
             so_loss_src = torch.sum(torch.sum (attention_probs_src*guide, -1), -1).view(-1)
             so_loss_tgt = torch.sum(torch.sum (attention_probs_tgt*guide, -1), -1).view(-1)
 
-            so_loss = so_loss_src/len_src.float() + so_loss_tgt/len_tgt.float()
+            so_loss = so_loss_src/len_src + so_loss_tgt/len_tgt
             so_loss = -torch.mean(so_loss)
 
         co_loss = 0
         if train_co:
-            min_len = torch.min(len_src, len_tgt).float()
+            min_len = torch.min(len_src, len_tgt)
             trace = torch.matmul(attention_probs_src, (attention_probs_tgt).transpose(-1, -2)).squeeze(1)
             trace = torch.einsum('bii->b', trace)
             co_loss = -torch.mean(trace/min_len)
@@ -647,8 +647,8 @@ class BertForMaskedLM(BertPreTrainedModel):
             position_ids=position_ids2,
         )
 
-        so_loss = self.guide_layer(outputs_src, outputs_tgt, inputs_src, inputs_tgt, guide=guide, extraction=extraction, softmax_threshold=softmax_threshold, train_so=train_so, train_co=train_co)
-        return so_loss
+        sco_loss = self.guide_layer(outputs_src, outputs_tgt, inputs_src, inputs_tgt, guide=guide, extraction=extraction, softmax_threshold=softmax_threshold, train_so=train_so, train_co=train_co)
+        return sco_loss
 
     def get_aligned_word(self, inputs_src, inputs_tgt, bpe2word_map_src, bpe2word_map_tgt, device, src_len, tgt_len, align_layer=8, extraction='softmax', softmax_threshold=0.001, test=False):
         inputs_src = inputs_src.to(dtype=torch.long, device=device).clone()

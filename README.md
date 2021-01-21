@@ -1,6 +1,6 @@
 ## AWESOME: Aligning Word Embedding Spaces of Multilingual Encoders
 
-`awesome-align` is a tool that can extract word alignments from multilingual BERT (mBERT) and allows you to fine-tune mBERT on parallel corpora for better alignment quality.
+`awesome-align` is a tool that can extract word alignments from multilingual BERT (mBERT) and allows you to fine-tune mBERT on parallel corpora for better alignment quality (see [our paper](https://arxiv.org/abs/2101.08231) for more details).
 
 ### Dependencies
 
