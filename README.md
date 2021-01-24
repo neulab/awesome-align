@@ -101,6 +101,7 @@ The following table shows the alignment error rates (AERs) of our models and pop
 |            | De-En | Fr-En | Ro-En | Ja-En | Zh-En |
 | -| ------- | ------- | ------- | ------- | ------- | 
 | [fast\_align](https://github.com/clab/fast_align) | 27.0 | 10.5 | 32.1 | 51.1 | 38.1 |
+| [eflomal](https://github.com/robertostling/eflomal) | 22.6 | 8.2 | 25.1 | 47.5 | 28.7 |
 | [Mgiza](https://github.com/moses-smt/mgiza)    | 20.6 | 5.9 | 26.4 | 48.0 | 35.1 |
 | Ours (w/o fine-tuning, softmax) | 17.4 | 5.6 | 27.9 | 45.6 | 18.1 |
 | Ours (multilingually fine-tuned <br/>  w/o `--train_co`, softmax) [[Download]](https://drive.google.com/file/d/1IcQx6t5qtv4bdcGjjVCwXnRkpr67eisJ/view?usp=sharing) | 15.2 | **4.1** | 22.6 | **37.4** | **13.4** |
@@ -123,4 +124,4 @@ If you use our tool, we'd appreciate if you cite the following paper:
 
 ### Acknowledgements
 
-Some of the code is borrowed from [HuggingFace Transformers](https://github.com/huggingface/transformers) and the entmax implementation is from [this repo](https://github.com/deep-spin/entmax).
+Some of the code is borrowed from [HuggingFace Transformers](https://github.com/huggingface/transformers) licensed under [Apache 2.0](https://github.com/huggingface/transformers/blob/master/LICENSE) and the entmax implementation is from [this repo](https://github.com/deep-spin/entmax).
