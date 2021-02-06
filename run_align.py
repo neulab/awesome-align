@@ -27,6 +27,7 @@ from tqdm import trange
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, Dataset, SequentialSampler
 
+import modeling
 from configuration_bert import BertConfig
 from modeling import BertForMaskedLM
 from tokenization_bert import BertTokenizer
@@ -177,6 +178,10 @@ def main():
             "You are instantiating a new {} tokenizer. This is not supported, but you can do it from another script, save it,"
             "and load it from here, using --tokenizer_name".format(tokenizer_class.__name__)
         )
+
+    modeling.PAD_ID = tokenizer.pad_token_id
+    modeling.CLS_ID = tokenizer.cls_token_id
+    modeling.SEP_ID = tokenizer.sep_token_id
 
     if args.model_name_or_path:
         model = model_class.from_pretrained(

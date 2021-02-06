@@ -31,6 +31,7 @@ from torch.utils.data import DataLoader, Dataset, RandomSampler, SequentialSampl
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm, trange
 
+import modeling
 from train_utils import _sorted_checkpoints, _rotate_checkpoints, WEIGHTS_NAME, AdamW, get_linear_schedule_with_warmup
 from configuration_bert import BertConfig
 from modeling import BertForMaskedLM
@@ -747,6 +748,10 @@ def main():
             "You are instantiating a new {} tokenizer. This is not supported, but you can do it from another script, save it,"
             "and load it from here, using --tokenizer_name".format(tokenizer_class.__name__)
         )
+
+    modeling.PAD_ID = tokenizer.pad_token_id
+    modeling.CLS_ID = tokenizer.cls_token_id
+    modeling.SEP_ID = tokenizer.sep_token_id
 
     if args.block_size <= 0:
         args.block_size = tokenizer.max_len

@@ -32,6 +32,9 @@ from file_utils import add_start_docstrings, add_start_docstrings_to_callable
 from modeling_utils import PreTrainedModel
 from sparsemax import sparsemax, entmax15
 
+PAD_ID=0
+CLS_ID=101
+SEP_ID=102
 
 logger = logging.getLogger(__name__)
 
@@ -540,8 +543,8 @@ class BertGuideHead(nn.Module):
         train_so=True, train_co=False,
     ):
         #mask
-        attention_mask_src = ( (inputs_src==0) + (inputs_src==101) + (inputs_src==102) ).float()
-        attention_mask_tgt = ( (inputs_tgt==0) + (inputs_tgt==101) + (inputs_tgt==102) ).float()
+        attention_mask_src = ( (inputs_src==PAD_ID) + (inputs_src==CLS_ID) + (inputs_src==SEP_ID) ).float()
+        attention_mask_tgt = ( (inputs_tgt==PAD_ID) + (inputs_tgt==CLS_ID) + (inputs_tgt==SEP_ID) ).float()
         len_src = torch.sum(1-attention_mask_src, -1)
         len_tgt = torch.sum(1-attention_mask_tgt, -1)
         attention_mask_src = return_extended_attention_mask(1-attention_mask_src, hidden_states_src.dtype)
