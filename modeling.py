@@ -507,7 +507,7 @@ class BertModel(BertPreTrainedModel):
 
         if attention_mask is None:
             attention_mask = torch.ones(input_shape, device=device)
-            attention_mask[input_ids==0] = 0
+            attention_mask[input_ids==PAD_ID] = 0
 
         token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=device)
 
@@ -661,12 +661,12 @@ class BertForMaskedLM(BertPreTrainedModel):
             outputs_src = self.bert(
                 inputs_src,
                 align_layer=align_layer,
-                attention_mask=(inputs_src!=0),
+                attention_mask=(inputs_src!=PAD_ID),
             )
             outputs_tgt = self.bert(
                 inputs_tgt,
                 align_layer=align_layer,
-                attention_mask=(inputs_tgt!=0),
+                attention_mask=(inputs_tgt!=PAD_ID),
             )
 
             attention_probs_inter = self.guide_layer(outputs_src, outputs_tgt, inputs_src, inputs_tgt, extraction=extraction, softmax_threshold=softmax_threshold)
