@@ -653,7 +653,7 @@ class BertForMaskedLM(BertPreTrainedModel):
         sco_loss = self.guide_layer(outputs_src, outputs_tgt, inputs_src, inputs_tgt, guide=guide, extraction=extraction, softmax_threshold=softmax_threshold, train_so=train_so, train_co=train_co)
         return sco_loss
 
-    def get_aligned_word(self, inputs_src, inputs_tgt, bpe2word_map_src, bpe2word_map_tgt, device, src_len, tgt_len, align_layer=8, extraction='softmax', softmax_threshold=0.001, test=False):
+    def get_aligned_word(self, inputs_src, inputs_tgt, bpe2word_map_src, bpe2word_map_tgt, device, src_len, tgt_len, align_layer=8, extraction='softmax', softmax_threshold=0.001, test=False, lines=None):
         inputs_src = inputs_src.to(dtype=torch.long, device=device).clone()
         inputs_tgt = inputs_tgt.to(dtype=torch.long, device=device).clone()
 
@@ -678,10 +678,17 @@ class BertForMaskedLM(BertPreTrainedModel):
 
         for idx, (attention, b2w_src, b2w_tgt) in enumerate(zip(attention_probs_inter, bpe2word_map_src, bpe2word_map_tgt)):
             aligns = set()
-            non_zeros = torch.nonzero(attention)
-            for i, j in non_zeros:
-                aligns.add( (b2w_src[i], b2w_tgt[j]) )
-            word_aligns.append(aligns)
+            try:
+                non_zeros = torch.nonzero(attention)
+                for i, j in non_zeros:
+                    aligns.add( (b2w_src[i], b2w_tgt[j]) )
+                word_aligns.append(aligns)
+            except:
+                print(f'!!!Error when processing the line "{lines[idx]}"')
+                print(f'aligned subword pairs {non_zeros}')
+                print(f'b2w_src {b2w_src}')
+                print(f'b2w_tgt {b2w_tgt}')
+                exit()
 
         if test:
             return word_aligns

@@ -79,7 +79,7 @@ class LineByLineTextDataset(Dataset):
                         for i, word_list in enumerate(token_tgt):
                             bpe2word_map_tgt += [i for x in word_list]
 
-                        self.examples.append( (ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt) )
+                        self.examples.append( (ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt, line) )
 
             if args.cache_data:
                 logger.info("Saving cached data to %s", cache_fn)
@@ -159,6 +159,7 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
         examples_src, examples_tgt, examples_srctgt, examples_tgtsrc, langid_srctgt, langid_tgtsrc, psi_examples_srctgt, psi_labels = [], [], [], [], [], [], [], []
         src_len = tgt_len = 0
         bpe2word_map_src, bpe2word_map_tgt = [], []
+        lines = []
         for example in examples:
             end_id = example[0][0][-1].view(-1)
 
@@ -215,6 +216,8 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
 
             bpe2word_map_src.append(example[2])
             bpe2word_map_tgt.append(example[3])
+
+            lines.append(example[4])
             
         examples_src = pad_sequence(examples_src, batch_first=True, padding_value=tokenizer.pad_token_id)
         examples_tgt = pad_sequence(examples_tgt, batch_first=True, padding_value=tokenizer.pad_token_id)
@@ -224,7 +227,7 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
         langid_tgtsrc = pad_sequence(langid_tgtsrc, batch_first=True, padding_value=tokenizer.pad_token_id)
         psi_examples_srctgt = pad_sequence(psi_examples_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
         psi_labels = torch.tensor(psi_labels)
-        guides = model.get_aligned_word(examples_src, examples_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, src_len, tgt_len, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold)
+        guides = model.get_aligned_word(examples_src, examples_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, src_len, tgt_len, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold, lines=lines)
         return examples_src, examples_tgt, guides, examples_srctgt, langid_srctgt, examples_tgtsrc, langid_tgtsrc, psi_examples_srctgt, psi_labels
 
 
