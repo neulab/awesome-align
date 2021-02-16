@@ -72,6 +72,9 @@ class LineByLineTextDataset(Dataset):
 
                         ids_src, ids_tgt = tokenizer.prepare_for_model(list(itertools.chain(*wid_src)), return_tensors='pt', max_length=tokenizer.max_len)['input_ids'], tokenizer.prepare_for_model(list(itertools.chain(*wid_tgt)), return_tensors='pt', max_length=tokenizer.max_len)['input_ids']
 
+                        if len(ids_src[0]) + len(ids_tgt[0]) >= args.max_position_embeddings:
+                            continue
+
                         bpe2word_map_src = []
                         for i, word_list in enumerate(token_src):
                             bpe2word_map_src += [i for x in word_list]
@@ -79,10 +82,6 @@ class LineByLineTextDataset(Dataset):
                         for i, word_list in enumerate(token_tgt):
                             bpe2word_map_tgt += [i for x in word_list]
 
-                        if len(ids_src[0]) + len(ids_tgt[0]) >= args.max_position_embeddings: 
-                            print(f"IDs Src length is {len(ids_src[0])} && {len(ids_tgt[0])}")
-                            print(f"IDs are {ids_src} & {ids_src[0]}")
-                            continue
 
                         self.examples.append( (ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt) )
 
