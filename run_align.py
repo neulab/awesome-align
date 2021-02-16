@@ -125,7 +125,6 @@ def word_align(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer):
                 output_wrds.append(f"{srcwrds[srcix]}-{tgtwrds[tgtix]}")
             fwriter.write(' '.join(output_wrds)+'\n')
 
-
 def main():
     parser = argparse.ArgumentParser()
 
