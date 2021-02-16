@@ -79,6 +79,11 @@ class LineByLineTextDataset(Dataset):
                         for i, word_list in enumerate(token_tgt):
                             bpe2word_map_tgt += [i for x in word_list]
 
+                        if len(ids_src[0]) + len(ids_tgt[0]) >= args.max_position_embeddings: 
+                            print(f"IDs Src length is {len(ids_src[0])} && {len(ids_tgt[0])}")
+                            print(f"IDs are {ids_src} & {ids_src[0]}")
+                            continue
+
                         self.examples.append( (ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt) )
 
             if args.cache_data:
@@ -673,6 +678,7 @@ def main():
     parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
     args = parser.parse_args()
 
+
     if args.eval_data_file is None and args.do_eval:
         raise ValueError(
             "Cannot do evaluation without an evaluation data file. Either supply a file to --eval_data_file "
@@ -738,6 +744,8 @@ def main():
         config = config_class.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
     else:
         config = config_class()
+
+    args.max_position_embeddings = config.max_position_embeddings
 
     if args.tokenizer_name:
         tokenizer = tokenizer_class.from_pretrained(args.tokenizer_name, cache_dir=args.cache_dir)
