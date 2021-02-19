@@ -40,5 +40,5 @@ setup(
     install_requires=pkgs,
     dependency_links=new_links,
     version='0.1.0',
-    description='A awesome wordalignment tool',
+    description='An awesome wordalignment tool',
 )
