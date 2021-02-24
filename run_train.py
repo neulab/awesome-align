@@ -62,6 +62,7 @@ class LineByLineTextDataset(Dataset):
                         try:
                             src, tgt = line.split(' ||| ')
                             if src.rstrip() == '' or tgt.rstrip() == '':
+                                logger.info("Skipping instance %s", line)
                                 continue
                         except:
                             logger.info("Skipping instance %s", line)
@@ -71,6 +72,9 @@ class LineByLineTextDataset(Dataset):
                         wid_src, wid_tgt = [tokenizer.convert_tokens_to_ids(x) for x in token_src], [tokenizer.convert_tokens_to_ids(x) for x in token_tgt]
 
                         ids_src, ids_tgt = tokenizer.prepare_for_model(list(itertools.chain(*wid_src)), return_tensors='pt', max_length=tokenizer.max_len)['input_ids'], tokenizer.prepare_for_model(list(itertools.chain(*wid_tgt)), return_tensors='pt', max_length=tokenizer.max_len)['input_ids']
+                        if len(ids_src[0]) == 2 or len(ids_tgt[0]) == 2:
+                            logger.info("Skipping instance %s", line)
+                            continue
 
                         bpe2word_map_src = []
                         for i, word_list in enumerate(token_src):
