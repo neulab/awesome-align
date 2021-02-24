@@ -685,9 +685,6 @@ class BertForMaskedLM(BertPreTrainedModel):
                 word_aligns.append(aligns)
             except:
                 print(f'!!!Error when processing the line "{lines[idx]}"')
-                print(f'aligned subword pairs {non_zeros}')
-                print(f'b2w_src {b2w_src}')
-                print(f'b2w_tgt {b2w_tgt}')
                 exit()
 
         if test:

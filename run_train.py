@@ -62,6 +62,7 @@ class LineByLineTextDataset(Dataset):
                         try:
                             src, tgt = line.split(' ||| ')
                             if src.rstrip() == '' or tgt.rstrip() == '':
+                                logger.info("Skipping instance %s", line)
                                 continue
                         except:
                             logger.info("Skipping instance %s", line)
@@ -71,6 +72,10 @@ class LineByLineTextDataset(Dataset):
                         wid_src, wid_tgt = [tokenizer.convert_tokens_to_ids(x) for x in token_src], [tokenizer.convert_tokens_to_ids(x) for x in token_tgt]
 
                         ids_src, ids_tgt = tokenizer.prepare_for_model(list(itertools.chain(*wid_src)), return_tensors='pt', max_length=tokenizer.max_len)['input_ids'], tokenizer.prepare_for_model(list(itertools.chain(*wid_tgt)), return_tensors='pt', max_length=tokenizer.max_len)['input_ids']
+
+                        if len(ids_src[0]) == 2 or len(ids_tgt[0]) == 2:
+                            logger.info("Skipping instance %s", line)
+                            continue
 
                         bpe2word_map_src = []
                         for i, word_list in enumerate(token_src):
@@ -413,6 +418,7 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
         examples_src, examples_tgt, examples_srctgt, examples_tgtsrc, langid_srctgt, langid_tgtsrc, psi_examples_srctgt, psi_labels = [], [], [], [], [], [], [], []
         src_len = tgt_len = 0
         bpe2word_map_src, bpe2word_map_tgt = [], []
+        lines= []
         for example in examples:
             end_id = example[0][0][-1].view(-1)
 
@@ -459,6 +465,7 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
             bpe2word_map_src.append(example[2])
             bpe2word_map_tgt.append(example[3])
 
+            lines.append(example[4])
             
         examples_src = pad_sequence(examples_src, batch_first=True, padding_value=tokenizer.pad_token_id)
         examples_tgt = pad_sequence(examples_tgt, batch_first=True, padding_value=tokenizer.pad_token_id)
@@ -468,7 +475,7 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
         langid_tgtsrc = pad_sequence(langid_tgtsrc, batch_first=True, padding_value=tokenizer.pad_token_id)
         psi_examples_srctgt = pad_sequence(psi_examples_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
         psi_labels = torch.tensor(psi_labels)
-        guides = model.get_aligned_word(examples_src, examples_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, src_len, tgt_len, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold)
+        guides = model.get_aligned_word(examples_src, examples_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, src_len, tgt_len, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold, lines=lines)
         return examples_src, examples_tgt, guides, examples_srctgt, langid_srctgt, examples_tgtsrc, langid_tgtsrc, psi_examples_srctgt, psi_labels
 
     eval_sampler = SequentialSampler(eval_dataset)

@@ -62,6 +62,8 @@ class LineByLineTextDataset(Dataset):
                 wid_src, wid_tgt = [tokenizer.convert_tokens_to_ids(x) for x in token_src], [tokenizer.convert_tokens_to_ids(x) for x in token_tgt]
 
                 ids_src, ids_tgt = tokenizer.prepare_for_model(list(itertools.chain(*wid_src)), return_tensors='pt', max_length=tokenizer.max_len)['input_ids'], tokenizer.prepare_for_model(list(itertools.chain(*wid_tgt)), return_tensors='pt', max_length=tokenizer.max_len)['input_ids']
+                if len(ids_src[0]) == 2 or len(ids_tgt[0]) == 2:
+                    raise ValueError(f'Line {idx+1} is not in the correct format!')
 
                 bpe2word_map_src = []
                 for i, word_list in enumerate(token_src):
@@ -70,7 +72,7 @@ class LineByLineTextDataset(Dataset):
                 for i, word_list in enumerate(token_tgt):
                     bpe2word_map_tgt += [i for x in word_list]
 
-                self.examples.append( (ids_src[0], ids_tgt[0], bpe2word_map_src, bpe2word_map_tgt) )
+                self.examples.append( (ids_src[0], ids_tgt[0], bpe2word_map_src, bpe2word_map_tgt, line) )
 
     def __len__(self):
         return len(self.examples)
@@ -81,10 +83,10 @@ class LineByLineTextDataset(Dataset):
 def word_align(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer):
 
     def collate(examples):
-        ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt = zip(*examples)
+        ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt, lines = zip(*examples)
         ids_src = pad_sequence(ids_src, batch_first=True, padding_value=tokenizer.pad_token_id)
         ids_tgt = pad_sequence(ids_tgt, batch_first=True, padding_value=tokenizer.pad_token_id)
-        return ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt
+        return ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt, lines
 
     dataset = LineByLineTextDataset(tokenizer, args, file_path=args.data_file)
     sampler = SequentialSampler(dataset)
@@ -98,8 +100,8 @@ def word_align(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer):
     with open(args.output_file, 'w') as writer:
         for batch in dataloader:
             with torch.no_grad():
-                ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt = batch
-                word_aligns_list = model.get_aligned_word(ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, 0, 0, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold, test=True)
+                ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt, lines = batch
+                word_aligns_list = model.get_aligned_word(ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, 0, 0, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold, lines=lines, test=True)
                 for word_aligns in word_aligns_list:
                     output_str = []
                     for word_align in word_aligns:
