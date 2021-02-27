@@ -40,5 +40,10 @@ setup(
     install_requires=pkgs,
     dependency_links=new_links,
     version='0.1.0',
-    description='An awesome wordalignment tool',
+    description='A awesome word alignment tool',
+    packages=find_packages(
+        include = ['awesomealign', 'awesomealign.*'],
+        exclude = ['run_align.py', 'run_train.py']
+    ),
+    url='https://github.com/neulab/awesome-align',
 )

@@ -31,13 +31,13 @@ from torch.utils.data import DataLoader, Dataset, RandomSampler, SequentialSampl
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm, trange
 
-import modeling
-from train_utils import _sorted_checkpoints, _rotate_checkpoints, WEIGHTS_NAME, AdamW, get_linear_schedule_with_warmup
-from configuration_bert import BertConfig
-from modeling import BertForMaskedLM
-from tokenization_bert import BertTokenizer
-from tokenization_utils import PreTrainedTokenizer
-from modeling_utils import PreTrainedModel
+from awesomealign import modeling
+from awesomealign.train_utils import _sorted_checkpoints, _rotate_checkpoints, WEIGHTS_NAME, AdamW, get_linear_schedule_with_warmup
+from awesomealign.configuration_bert import BertConfig
+from awesomealign.modeling import BertForMaskedLM
+from awesomealign.tokenization_bert import BertTokenizer
+from awesomealign.tokenization_utils import PreTrainedTokenizer
+from awesomealign.modeling_utils import PreTrainedModel
 
 
 

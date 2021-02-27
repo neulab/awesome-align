@@ -26,11 +26,11 @@ import torch
 from torch import nn
 from torch.nn import CrossEntropyLoss
 
-from activations import gelu, gelu_new, swish
-from configuration_bert import BertConfig
-from file_utils import add_start_docstrings, add_start_docstrings_to_callable
-from modeling_utils import PreTrainedModel
-from sparsemax import sparsemax, entmax15
+from awesomealign.activations import gelu, gelu_new, swish
+from awesomealign.configuration_bert import BertConfig
+from awesomealign.file_utils import add_start_docstrings, add_start_docstrings_to_callable
+from awesomealign.modeling_utils import PreTrainedModel
+from awesomealign.sparsemax import sparsemax, entmax15
 
 PAD_ID=0
 CLS_ID=101
