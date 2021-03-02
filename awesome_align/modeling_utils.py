@@ -25,9 +25,9 @@ from torch import nn
 from torch.nn import CrossEntropyLoss
 from torch.nn import functional as F
 
-from awesomealign.activations import get_activation
-from awesomealign.configuration_utils import PretrainedConfig
-from awesomealign.file_utils import (
+from awesome_align.activations import get_activation
+from awesome_align.configuration_utils import PretrainedConfig
+from awesome_align.file_utils import (
     DUMMY_INPUTS,
     TF2_WEIGHTS_NAME,
     TF_WEIGHTS_NAME,

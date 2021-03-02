@@ -23,7 +23,7 @@ from typing import List, Optional
 
 from tokenizers import BertWordPieceTokenizer
 
-from awesomealign.tokenization_utils import PreTrainedTokenizer, PreTrainedTokenizerFast
+from awesome_align.tokenization_utils import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 
 logger = logging.getLogger(__name__)

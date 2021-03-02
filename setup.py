@@ -36,13 +36,13 @@ def install_deps():
 pkgs, new_links = install_deps()
 
 setup(
-    name='awesomealign',
+    name='awesome_align',
     install_requires=pkgs,
     dependency_links=new_links,
     version='0.1.0',
     description='A awesome word alignment tool',
     packages=find_packages(
-        include = ['awesomealign', 'awesomealign.*'],
+        include = ['awesome_align', 'awesome_align.*'],
         exclude = ['run_align.py', 'run_train.py']
     ),
     url='https://github.com/neulab/awesome-align',
