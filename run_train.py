@@ -682,9 +682,10 @@ def main():
         "See details at https://nvidia.github.io/apex/amp.html",
     )
     parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
+    parser.add_argument("--gpu_rank", type=int, default=1, help="Select GPU to train")
     args = parser.parse_args()
 
-    os.environ["CUDA_VISIBLE_DEVICES"]="1"
+    os.environ["CUDA_VISIBLE_DEVICES"]=str(args.gpu_rank)
 
     if args.eval_data_file is None and args.do_eval:
         raise ValueError(
