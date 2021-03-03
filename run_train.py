@@ -684,6 +684,7 @@ def main():
     parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
     args = parser.parse_args()
 
+    os.environ["CUDA_VISIBLE_DEVICES"]=args.local_rank
 
     if args.eval_data_file is None and args.do_eval:
         raise ValueError(
