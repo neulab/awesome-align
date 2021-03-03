@@ -76,12 +76,16 @@ class LineByLineTextDataset(Dataset):
                             logger.info("Skipping instance %s", line)
                             continue
 
+                        if len(ids_src[0]) + len(ids_tgt[0]) >= args.max_position_embeddings:
+                            continue
+
                         bpe2word_map_src = []
                         for i, word_list in enumerate(token_src):
                             bpe2word_map_src += [i for x in word_list]
                         bpe2word_map_tgt = []
                         for i, word_list in enumerate(token_tgt):
                             bpe2word_map_tgt += [i for x in word_list]
+
 
                         self.examples.append( (ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt) )
 
@@ -228,7 +232,10 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
         langid_tgtsrc = pad_sequence(langid_tgtsrc, batch_first=True, padding_value=tokenizer.pad_token_id)
         psi_examples_srctgt = pad_sequence(psi_examples_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
         psi_labels = torch.tensor(psi_labels)
-        guides = model.get_aligned_word(examples_src, examples_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, src_len, tgt_len, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold)
+
+        model_distr = model.module if isinstance(model, torch.nn.DataParallel) else model  # Take care of distributed/parallel training
+
+        guides = model_distr.get_aligned_word(examples_src, examples_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, src_len, tgt_len, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold)
         return examples_src, examples_tgt, guides, examples_srctgt, langid_srctgt, examples_tgtsrc, langid_tgtsrc, psi_examples_srctgt, psi_labels
 
 
@@ -469,7 +476,10 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
         langid_tgtsrc = pad_sequence(langid_tgtsrc, batch_first=True, padding_value=tokenizer.pad_token_id)
         psi_examples_srctgt = pad_sequence(psi_examples_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
         psi_labels = torch.tensor(psi_labels)
-        guides = model.get_aligned_word(examples_src, examples_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, src_len, tgt_len, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold)
+        
+        model_distr = model.module if isinstance(model, torch.nn.DataParallel) else model  # Take care of distributed/parallel training
+
+        guides = model_distr.get_aligned_word(examples_src, examples_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, src_len, tgt_len, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold)
         return examples_src, examples_tgt, guides, examples_srctgt, langid_srctgt, examples_tgtsrc, langid_tgtsrc, psi_examples_srctgt, psi_labels
 
     eval_sampler = SequentialSampler(eval_dataset)
@@ -655,6 +665,7 @@ def main():
         help="Limit the total amount of checkpoints, delete the older checkpoints in the output_dir, does not delete by default",
     )
     parser.add_argument("--no_cuda", action="store_true", help="Avoid using CUDA when available")
+    parser.add_argument("--spc_gpu", default=1, type=int, help="No of GPUs to use")
     parser.add_argument(
         "--overwrite_output_dir", action="store_true", help="Overwrite the content of the output directory"
     )
@@ -675,7 +686,10 @@ def main():
         "See details at https://nvidia.github.io/apex/amp.html",
     )
     parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
+    parser.add_argument("--gpu_rank", type=int, default=1, help="Select GPU to train")
     args = parser.parse_args()
+
+    os.environ["CUDA_VISIBLE_DEVICES"]=str(args.gpu_rank)
 
     if args.eval_data_file is None and args.do_eval:
         raise ValueError(
@@ -702,7 +716,11 @@ def main():
         )
 
     # Setup CUDA, GPU & distributed training
-    if args.local_rank == -1 or args.no_cuda:
+    if args.spc_gpu ==1: 
+        device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
+        args.n_gpu = 1
+
+    elif args.local_rank == -1 or args.no_cuda:
         device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
         args.n_gpu = 0 if args.no_cuda else torch.cuda.device_count()
     else:  # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
@@ -710,6 +728,8 @@ def main():
         device = torch.device("cuda", args.local_rank)
         torch.distributed.init_process_group(backend="nccl")
         args.n_gpu = 1
+
+
     args.device = device
 
     # Setup logging
@@ -742,6 +762,8 @@ def main():
         config = config_class.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
     else:
         config = config_class()
+
+    args.max_position_embeddings = config.max_position_embeddings
 
     if args.tokenizer_name:
         tokenizer = tokenizer_class.from_pretrained(args.tokenizer_name, cache_dir=args.cache_dir)

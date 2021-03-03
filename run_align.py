@@ -109,6 +109,23 @@ def word_align(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer):
                     writer.write(' '.join(output_str)+'\n')
                 tqdm_iterator.update(len(ids_src))
 
+    with open(args.output_file, 'r') as fh:
+        outputf = (fh.read()).split("\n")
+    with open(args.data_file, 'r') as fh:
+        datalines = (fh.read()).split("\n")
+
+    with open(args.output_file+".outtxt", 'w') as fwriter:
+        for indices, line in zip(outputf, datalines):
+            srcline, tgtline = line.split(' ||| ')
+            indices = indices.split()
+            srcwrds = srcline.split()
+            tgtwrds = tgtline.split()
+            output_wrds = []
+            for wrd in indices:
+                srcix,tgtix = wrd.split("-")
+                srcix, tgtix = int(srcix), int(tgtix)
+                output_wrds.append(f"{srcwrds[srcix]}-{tgtwrds[tgtix]}")
+            fwriter.write(' '.join(output_wrds)+'\n')
 
 def main():
     parser = argparse.ArgumentParser()
