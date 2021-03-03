@@ -713,7 +713,7 @@ def main():
     if args.spc_gpu ==1: 
         device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
         torch.cuda.set_device(args.local_rank)
-        torch.distributed.init_process_group(backend="nccl", rank=args.local_rank)
+        torch.distributed.init_process_group(backend="nccl", rank=args.local_rank, world_size=1)
         args.n_gpu = 1
 
     elif args.local_rank == -1 or args.no_cuda:
