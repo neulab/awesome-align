@@ -42,10 +42,7 @@ setup(
     version='0.1.0',
     license='BSD 3-Clause',
     description='An awesome word alignment tool',
-    packages=find_packages(
-        include = ['awesome_align', 'awesome_align.*'],
-        exclude = ['run_align.py', 'run_train.py']
-    ),
+    packages=find_packages(),
     entry_points={
         "console_scripts": [
             "awesome-align=awesome_align.run_align:main",
