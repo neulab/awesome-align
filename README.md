@@ -8,6 +8,7 @@ First, you need to install the dependencies:
 
 ```bash
 pip install -r requirements.txt
+python setup.py install
 ```
 
 ### Input format
@@ -23,7 +24,7 @@ DATA_FILE=/path/to/data/file
 MODEL_NAME_OR_PATH=bert-base-multilingual-cased
 OUTPUT_FILE=/path/to/output/file
 
-CUDA_VISIBLE_DEVICES=0 python run_align.py \
+CUDA_VISIBLE_DEVICES=0 awesome-align \
     --output_file=$OUTPUT_FILE \
     --model_name_or_path=$MODEL_NAME_OR_PATH \
     --data_file=$DATA_FILE \
@@ -46,7 +47,7 @@ TRAIN_FILE=/path/to/train/file
 EVAL_FILE=/path/to/eval/file
 OUTPUT_DIR=/path/to/output/directory
 
-CUDA_VISIBLE_DEVICES=0 python run_train.py \
+CUDA_VISIBLE_DEVICES=0 awesome-train \
     --output_dir=$OUTPUT_DIR \
     --model_name_or_path=bert-base-multilingual-cased \
     --extraction 'softmax' \
@@ -71,7 +72,7 @@ TRAIN_FILE=/path/to/train/file
 EVAL_FILE=/path/to/eval/file
 OUTPUT_DIR=/path/to/output/directory
 
-CUDA_VISIBLE_DEVICES=0 python run_train.py \
+CUDA_VISIBLE_DEVICES=0 awesome-train \
     --output_dir=$OUTPUT_DIR \
     --model_name_or_path=bert-base-multilingual-cased \
     --extraction 'softmax' \
