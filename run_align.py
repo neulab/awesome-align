@@ -27,12 +27,12 @@ from tqdm import trange
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, Dataset, SequentialSampler
 
-import modeling
-from configuration_bert import BertConfig
-from modeling import BertForMaskedLM
-from tokenization_bert import BertTokenizer
-from tokenization_utils import PreTrainedTokenizer
-from modeling_utils import PreTrainedModel
+from awesome_align import modeling
+from awesome_align.configuration_bert import BertConfig
+from awesome_align.modeling import BertForMaskedLM
+from awesome_align.tokenization_bert import BertTokenizer
+from awesome_align.tokenization_utils import PreTrainedTokenizer
+from awesome_align.modeling_utils import PreTrainedModel
 
 
 

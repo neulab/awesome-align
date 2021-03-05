@@ -17,8 +17,7 @@
 
 
 import logging
-
-from configuration_utils import PretrainedConfig
+from awesome_align.configuration_utils import PretrainedConfig
 
 
 logger = logging.getLogger(__name__)
