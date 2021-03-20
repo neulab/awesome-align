@@ -92,8 +92,6 @@ class LineByLineTextDataset(Dataset):
                 logger.info("Saving cached data to %s", cache_fn)
                 torch.save(self.examples, cache_fn)
 
-
-
     def __len__(self):
         return len(self.examples)
 
@@ -264,7 +262,6 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
         optimizer, num_warmup_steps=args.warmup_steps, num_training_steps=t_total
     )
 
-
     if args.fp16:
         try:
             from apex import amp
@@ -323,7 +320,6 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
     tqdm_iterator = trange(int(t_total), desc="Iteration", disable=args.local_rank not in [-1, 0])
     for _ in range(int(args.num_train_epochs)):
         for step, batch in enumerate(train_dataloader):
-
             model.train()
 
             if args.train_so or args.train_co:
@@ -361,7 +357,6 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
             if args.train_psi:
                 loss = model(inputs_src=batch[7].to(args.device), labels_psi=batch[8].to(args.device), align_layer=args.align_layer+1)
                 tr_loss = backward_loss(loss, tr_loss)
-
 
             if (step + 1) % args.gradient_accumulation_steps == 0:
                 if args.fp16:
@@ -476,10 +471,7 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
         langid_tgtsrc = pad_sequence(langid_tgtsrc, batch_first=True, padding_value=tokenizer.pad_token_id)
         psi_examples_srctgt = pad_sequence(psi_examples_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
         psi_labels = torch.tensor(psi_labels)
-        if args.n_gpu > 1 or args.local_rank != -1:
-            guides = model.module.get_aligned_word(examples_src, examples_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, src_len, tgt_len, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold)
-        else:
-            guides = model.get_aligned_word(examples_src, examples_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, src_len, tgt_len, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold)
+        guides = model.get_aligned_word(examples_src, examples_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, src_len, tgt_len, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold)
 
         return examples_src, examples_tgt, guides, examples_srctgt, langid_srctgt, examples_tgtsrc, langid_tgtsrc, psi_examples_srctgt, psi_labels
 
