@@ -32,7 +32,7 @@ CUDA_VISIBLE_DEVICES=0 awesome-align \
     --batch_size 32 \
 ```
 
-This produces outputs in the `i-j` Pharaoh format. A pair `i-j` indicates that the <i>i</i>th word (zero-indexed) of the source sentence is aligned to the <i>j</i>th word of the target sentence. You can set `--cache_dir` to specify where you want to download/load multilingual BERT.
+This produces outputs in the `i-j` Pharaoh format. A pair `i-j` indicates that the <i>i</i>th word (zero-indexed) of the source sentence is aligned to the <i>j</i>th word of the target sentence. You can set `--cache_dir` to specify where you want to cache multilingual BERT.
 
 You can also set `MODEL_NAME_OR_PATH` to the path of your fine-tuned model as shown below.
 
@@ -93,7 +93,7 @@ CUDA_VISIBLE_DEVICES=0 awesome-train \
     --eval_data_file=$EVAL_FILE \
 ```
 
-If you want high alignment recalls, you can turn on the `--train_co` option, but note that the alignment precisions may drop. You can set `--cache_dir` to specify where you want to download/load multilingual BERT.
+If you want high alignment recalls, you can turn on the `--train_co` option, but note that the alignment precisions may drop. You can set `--cache_dir` to specify where you want to cache multilingual BERT.
 
 ### Model performance
 

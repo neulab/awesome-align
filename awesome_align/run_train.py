@@ -22,7 +22,6 @@ import logging
 import os
 import random
 import re
-import tempfile
 import warnings
 warnings.filterwarnings("ignore")
 from typing import Dict, List, Tuple
@@ -704,14 +703,6 @@ def main():
             )
         )
 
-    # Set cache dir
-    cache_dir = args.cache_dir
-    if args.cache_dir is None:
-        temp_dir = tempfile.TemporaryDirectory()
-        cache_dir = temp_dir.name
-        print("Creating a temporary directory to store pre-trained models...")
-        print("You can specify where to store the pre-trained models by setting '--cache_dir'")
-
     # Setup CUDA, GPU & distributed training
     if args.local_rank == -1 or args.no_cuda:
         device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
@@ -748,16 +739,16 @@ def main():
     config_class, model_class, tokenizer_class = BertConfig, BertForMaskedLM, BertTokenizer
 
     if args.config_name:
-        config = config_class.from_pretrained(args.config_name, cache_dir=cache_dir)
+        config = config_class.from_pretrained(args.config_name, cache_dir=args.cache_dir)
     elif args.model_name_or_path:
-        config = config_class.from_pretrained(args.model_name_or_path, cache_dir=cache_dir)
+        config = config_class.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
     else:
         config = config_class()
 
     if args.tokenizer_name:
-        tokenizer = tokenizer_class.from_pretrained(args.tokenizer_name, cache_dir=cache_dir)
+        tokenizer = tokenizer_class.from_pretrained(args.tokenizer_name, cache_dir=args.cache_dir)
     elif args.model_name_or_path:
-        tokenizer = tokenizer_class.from_pretrained(args.model_name_or_path, cache_dir=cache_dir)
+        tokenizer = tokenizer_class.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
     else:
         raise ValueError(
             "You are instantiating a new {} tokenizer. This is not supported, but you can do it from another script, save it,"
@@ -779,7 +770,7 @@ def main():
             args.model_name_or_path,
             from_tf=bool(".ckpt" in args.model_name_or_path),
             config=config,
-            cache_dir=cache_dir,
+            cache_dir=args.cache_dir,
         )
     else:
         logger.info("Training new model from scratch")
@@ -835,9 +826,6 @@ def main():
             result = evaluate(args, model, tokenizer, prefix=prefix)
             result = dict((k + "_{}".format(global_step), v) for k, v in result.items())
             results.update(result)
-
-    if cache_dir is None:
-        temp_dir.cleanup()
 
     return results
 
