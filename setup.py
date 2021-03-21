@@ -10,7 +10,7 @@ setup(
         'boto3',
         'filelock'
     ],
-    version='0.1.2',
+    version='0.1.3',
     author='NeuLab',
     author_email='zdou0830@gmail.com',
     license='BSD 3-Clause',
