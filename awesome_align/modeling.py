@@ -493,6 +493,20 @@ class BertModel(BertPreTrainedModel):
     def set_input_embeddings(self, value):
         self.embeddings.word_embeddings = value
 
+    def get_parameter_dtype(self):
+        try:
+            return next(self.parameters()).dtype
+        except StopIteration:
+            # For nn.DataParallel compatibility in PyTorch 1.5
+
+            def find_tensor_attributes(module):
+                tuples = [(k, v) for k, v in module.__dict__.items() if torch.is_tensor(v)]
+                return tuples
+
+            gen = self._named_members(get_members_fn=find_tensor_attributes)
+            first_tuple = next(gen)
+            return first_tuple[1].dtype
+
     @add_start_docstrings_to_callable(BERT_INPUTS_DOCSTRING)
     def forward(
         self,
@@ -513,7 +527,7 @@ class BertModel(BertPreTrainedModel):
 
         # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
         # ourselves in which case we just need to make it broadcastable to all heads.
-        extended_attention_mask = return_extended_attention_mask(attention_mask, next(self.parameters()).dtype)
+        extended_attention_mask = return_extended_attention_mask(attention_mask, self.get_parameter_dtype())
 
         embedding_output = self.embeddings(
             input_ids=input_ids, token_type_ids=token_type_ids, position_ids=position_ids,
