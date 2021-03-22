@@ -78,8 +78,7 @@ class LineByLineTextDataset(Dataset):
     def __getitem__(self, i):
         return self.examples[i]
 
-def word_align(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer):
-
+def word_align(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, output_word_alignments = False):
     def collate(examples):
         ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt = zip(*examples)
         ids_src = pad_sequence(ids_src, batch_first=True, padding_value=tokenizer.pad_token_id)
@@ -107,23 +106,24 @@ def word_align(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer):
                     writer.write(' '.join(output_str)+'\n')
                 tqdm_iterator.update(len(ids_src))
 
-    with open(args.output_file, 'r') as fh:
-        outputf = (fh.read()).split("\n")
-    with open(args.data_file, 'r') as fh:
-        datalines = (fh.read()).split("\n")
+    if output_word_alignments:
+        with open(args.output_file, 'r') as fh:
+            outputf = (fh.read()).split("\n")
+        with open(args.data_file, 'r') as fh:
+            datalines = (fh.read()).split("\n")
 
-    with open(args.output_file+".outtxt", 'w') as fwriter:
-        for indices, line in zip(outputf, datalines):
-            srcline, tgtline = line.split(' ||| ')
-            indices = indices.split()
-            srcwrds = srcline.split()
-            tgtwrds = tgtline.split()
-            output_wrds = []
-            for wrd in indices:
-                srcix,tgtix = wrd.split("-")
-                srcix, tgtix = int(srcix), int(tgtix)
-                output_wrds.append(f"{srcwrds[srcix]}-{tgtwrds[tgtix]}")
-            fwriter.write(' '.join(output_wrds)+'\n')
+        with open(args.output_file+".outtxt", 'w') as fwriter:
+            for indices, line in zip(outputf, datalines):
+                srcline, tgtline = line.split(' ||| ')
+                indices = indices.split()
+                srcwrds = srcline.split()
+                tgtwrds = tgtline.split()
+                output_wrds = []
+                for wrd in indices:
+                    srcix,tgtix = wrd.split("-")
+                    srcix, tgtix = int(srcix), int(tgtix)
+                    output_wrds.append(f"{srcwrds[srcix]}-{tgtwrds[tgtix]}")
+                fwriter.write(' '.join(output_wrds)+'\n')
 
 def main():
     parser = argparse.ArgumentParser()
