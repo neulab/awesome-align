@@ -72,9 +72,6 @@ class LineByLineTextDataset(Dataset):
 
                         ids_src, ids_tgt = tokenizer.prepare_for_model(list(itertools.chain(*wid_src)), return_tensors='pt', max_length=tokenizer.max_len)['input_ids'], tokenizer.prepare_for_model(list(itertools.chain(*wid_tgt)), return_tensors='pt', max_length=tokenizer.max_len)['input_ids']
 
-                        if len(ids_src[0]) + len(ids_tgt[0]) >= args.max_position_embeddings:
-                            continue
-
                         bpe2word_map_src = []
                         for i, word_list in enumerate(token_src):
                             bpe2word_map_src += [i for x in word_list]
@@ -749,8 +746,6 @@ def main():
     else:
         config = config_class()
 
-    args.max_position_embeddings = config.max_position_embeddings
-
     if args.tokenizer_name:
         tokenizer = tokenizer_class.from_pretrained(args.tokenizer_name, cache_dir=args.cache_dir)
     elif args.model_name_or_path:
@@ -766,10 +761,10 @@ def main():
     modeling.SEP_ID = tokenizer.sep_token_id
 
     if args.block_size <= 0:
-        args.block_size = tokenizer.max_len
+        args.block_size = config.max_position_embeddings
         # Our input block size will be the max possible for the model
     else:
-        args.block_size = min(args.block_size, tokenizer.max_len)
+        args.block_size = min(args.block_size, config.max_position_embeddings)
 
     if args.model_name_or_path:
         model = model_class.from_pretrained(
