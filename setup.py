@@ -10,11 +10,13 @@ setup(
         'boto3',
         'filelock'
     ],
-    version='0.1.3',
+    version='0.1.4',
     author='NeuLab',
     author_email='zdou0830@gmail.com',
     license='BSD 3-Clause',
     description='An awesome word alignment tool',
+    long_description=codecs.open("README.md", encoding="utf-8").read(),
+    long_description_content_type="text/markdown",
     packages=find_packages(),
     entry_points={
         "console_scripts": [
