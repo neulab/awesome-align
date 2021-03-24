@@ -312,7 +312,9 @@ class PreTrainedTokenizer(object):
         self._pad_token_type_id = 0
         self._additional_special_tokens = []
 
-        self.max_len = max_len if max_len is not None else int(1e12)
+        if "model_max_length" in kwargs:
+            max_len = kwargs.pop("model_max_length")
+        self.max_len = max_len if max_len is not None else int(512)
 
         # Padding side is right by default and over-riden in subclasses. If specified in the kwargs, it is changed.
         self.padding_side = kwargs.pop("padding_side", self.padding_side)
