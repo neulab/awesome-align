@@ -99,17 +99,27 @@ def word_align(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer):
     model.to(args.device)
     model.eval()
     tqdm_iterator = trange(dataset.__len__(), desc="Extracting")
+    if args.output_prob_file is not None:
+        prob_writer = open(args.output_prob_file, 'w')
     with open(args.output_file, 'w') as writer:
         for batch in dataloader:
             with torch.no_grad():
                 ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt = batch
-                word_aligns_list = model.get_aligned_word(ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, 0, 0, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold, test=True)
+                word_aligns_list = model.get_aligned_word(ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, 0, 0, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold, test=True, output_prob=(args.output_prob_file is not None))
                 for word_aligns in word_aligns_list:
                     output_str = []
+                    if args.output_prob_file is not None:
+                        output_prob_str = []
                     for word_align in word_aligns:
                         output_str.append(f'{word_align[0]}-{word_align[1]}')
+                        if args.output_prob_file is not None:
+                            output_prob_str.append(f'{word_aligns[word_align]}')
                     writer.write(' '.join(output_str)+'\n')
+                    if args.output_prob_file is not None:
+                        prob_writer.write(' '.join(output_prob_str)+'\n')
                 tqdm_iterator.update(len(ids_src))
+    if args.output_prob_file is not None:
+        prob_writer.close()
 
 
 def main():
@@ -123,7 +133,7 @@ def main():
         "--output_file",
         type=str,
         required=True,
-        help="The output directory where the model predictions and checkpoints will be written.",
+        help="The output file."
     )
     parser.add_argument("--align_layer", type=int, default=8, help="layer for alignment extraction")
     parser.add_argument(
@@ -131,6 +141,9 @@ def main():
     )
     parser.add_argument(
         "--softmax_threshold", type=float, default=0.001
+    )
+    parser.add_argument(
+        "--output_prob_file", default=None, type=str, help='The output probability file.'
     )
     parser.add_argument(
         "--model_name_or_path",
