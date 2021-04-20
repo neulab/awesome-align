@@ -4,3 +4,4 @@ tqdm
 numpy
 boto3
 filelock
+requests

@@ -9,9 +9,10 @@ setup(
         'tqdm',
         'numpy',
         'boto3',
-        'filelock'
+        'filelock',
+        'requests'
     ],
-    version='0.1.4',
+    version='0.1.5',
     author='NeuLab',
     author_email='zdou0830@gmail.com',
     license='BSD 3-Clause',

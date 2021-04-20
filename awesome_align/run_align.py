@@ -20,8 +20,6 @@ import argparse
 import random
 import itertools
 import os
-import warnings
-warnings.filterwarnings("ignore")
 
 import numpy as np
 import torch

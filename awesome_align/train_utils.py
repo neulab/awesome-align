@@ -193,8 +193,8 @@ class AdamW(Optimizer):
 
                 # Decay the first and second moment running average coefficient
                 # In-place operations to update the averages at the same time
-                exp_avg.mul_(beta1).add_(1.0 - beta1, grad)
-                exp_avg_sq.mul_(beta2).addcmul_(1.0 - beta2, grad, grad)
+                exp_avg.mul_(beta1).add_(alpha=1.0 - beta1, other=grad)
+                exp_avg_sq.mul_(beta2).addcmul_(value=1.0 - beta2, tensor1=grad, tensor2=grad)
                 denom = exp_avg_sq.sqrt().add_(group["eps"])
 
                 step_size = group["lr"]
@@ -203,7 +203,7 @@ class AdamW(Optimizer):
                     bias_correction2 = 1.0 - beta2 ** state["step"]
                     step_size = step_size * math.sqrt(bias_correction2) / bias_correction1
 
-                p.data.addcdiv_(-step_size, exp_avg, denom)
+                p.data.addcdiv_(value=-step_size, tensor1=exp_avg, tensor2=denom)
 
                 # Just adding the square of the weights to the loss function is *not*
                 # the correct way of using L2 regularization/weight decay with Adam,
