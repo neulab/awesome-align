@@ -97,6 +97,32 @@ CUDA_VISIBLE_DEVICES=0 awesome-train \
 
 If you want high alignment recalls, you can turn on the `--train_co` option, but note that the alignment precisions may drop. You can set `--cache_dir` to specify where you want to cache multilingual BERT.
 
+### Supervised settings
+
+In supervised settings where gold word alignments are available for your training data, you can incorporate the supervised signals into our self-training objective (`--train_so`) and here is an example command:
+
+```bash
+TRAIN_FILE=/path/to/train/file
+TRAIN_GOLD_FILE=/path/to/train/gold/file
+OUTPUT_DIR=/path/to/output/directory
+
+CUDA_VISIBLE_DEVICES=0 awesome-train \
+    --output_dir=$OUTPUT_DIR \
+    --model_name_or_path=bert-base-multilingual-cased \
+    --extraction 'softmax' \
+    --do_train \
+    --train_so \
+    --train_data_file=$TRAIN_FILE \
+    --train_gold_file=$TRAIN_GOLD_FILE \
+    --per_gpu_train_batch_size 2 \
+    --gradient_accumulation_steps 4 \
+    --num_train_epochs 5 \
+    --learning_rate 1e-4 \
+    --save_steps 200
+```
+
+See `examples/*.gold` for the example format of the gold alignments. You need to turn on the `--gold_one_index` option if the gold alignments are 1-indexed and you can turn on the `--ignore_possible_alignments` option if you want to ignore possible alignments.
+
 ### Model performance
 
 The following table shows the alignment error rates (AERs) of our models and popular statistical word aligners on five language pairs. The De-En, Fr-En, Ro-En datasets can be obtained following [this repo](https://github.com/lilt/alignment-scripts), the Ja-En data is from [this link](http://www.phontron.com/kftt/) and the Zh-En data is available at [this link](http://nlp.csai.tsinghua.edu.cn/~ly/systems/TsinghuaAligner/TsinghuaAligner.html). The best scores are in **bold**.

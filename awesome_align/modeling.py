@@ -675,46 +675,48 @@ class BertForMaskedLM(BertPreTrainedModel):
         sco_loss = self.guide_layer(outputs_src, outputs_tgt, inputs_src, inputs_tgt, guide=guide, extraction=extraction, softmax_threshold=softmax_threshold, train_so=train_so, train_co=train_co)
         return sco_loss
 
-    def get_aligned_word(self, inputs_src, inputs_tgt, bpe2word_map_src, bpe2word_map_tgt, device, src_len, tgt_len, align_layer=8, extraction='softmax', softmax_threshold=0.001, test=False, output_prob=False):
-        inputs_src = inputs_src.to(dtype=torch.long, device=device).clone()
-        inputs_tgt = inputs_tgt.to(dtype=torch.long, device=device).clone()
+    def get_aligned_word(self, inputs_src, inputs_tgt, bpe2word_map_src, bpe2word_map_tgt, device, src_len, tgt_len, align_layer=8, extraction='softmax', softmax_threshold=0.001, test=False, output_prob=False, word_aligns=None):
+        batch_size = inputs_src.size(0)
+        bpelen_src, bpelen_tgt = inputs_src.size(1)-2, inputs_tgt.size(1)-2
+        if word_aligns is None:
+            inputs_src = inputs_src.to(dtype=torch.long, device=device).clone()
+            inputs_tgt = inputs_tgt.to(dtype=torch.long, device=device).clone()
 
-        with torch.no_grad():
-            outputs_src = self.bert(
-                inputs_src,
-                align_layer=align_layer,
-                attention_mask=(inputs_src!=PAD_ID),
-            )
-            outputs_tgt = self.bert(
-                inputs_tgt,
-                align_layer=align_layer,
-                attention_mask=(inputs_tgt!=PAD_ID),
-            )
+            with torch.no_grad():
+                outputs_src = self.bert(
+                    inputs_src,
+                    align_layer=align_layer,
+                    attention_mask=(inputs_src!=PAD_ID),
+                )
+                outputs_tgt = self.bert(
+                    inputs_tgt,
+                    align_layer=align_layer,
+                    attention_mask=(inputs_tgt!=PAD_ID),
+                )
 
-            attention_probs_inter = self.guide_layer(outputs_src, outputs_tgt, inputs_src, inputs_tgt, extraction=extraction, softmax_threshold=softmax_threshold, output_prob=output_prob)
-            if output_prob:
-                attention_probs_inter, alignment_probs = attention_probs_inter
-                alignment_probs = alignment_probs[:, 0, 1:-1, 1:-1]
-            attention_probs_inter = attention_probs_inter.float()
-            
-        word_aligns = []
-        attention_probs_inter = attention_probs_inter[:, 0, 1:-1, 1:-1]
-        batch_size, bpelen_src, bpelen_tgt = attention_probs_inter.size() 
-
-        for idx, (attention, b2w_src, b2w_tgt) in enumerate(zip(attention_probs_inter, bpe2word_map_src, bpe2word_map_tgt)):
-            aligns = set() if not output_prob else dict()
-            non_zeros = torch.nonzero(attention)
-            for i, j in non_zeros:
-                word_pair = (b2w_src[i], b2w_tgt[j])
+                attention_probs_inter = self.guide_layer(outputs_src, outputs_tgt, inputs_src, inputs_tgt, extraction=extraction, softmax_threshold=softmax_threshold, output_prob=output_prob)
                 if output_prob:
-                    prob = alignment_probs[idx, i, j] 
-                    if not word_pair in aligns:
-                        aligns[word_pair] = prob
+                    attention_probs_inter, alignment_probs = attention_probs_inter
+                    alignment_probs = alignment_probs[:, 0, 1:-1, 1:-1]
+                attention_probs_inter = attention_probs_inter.float()
+                
+            word_aligns = []
+            attention_probs_inter = attention_probs_inter[:, 0, 1:-1, 1:-1]
+
+            for idx, (attention, b2w_src, b2w_tgt) in enumerate(zip(attention_probs_inter, bpe2word_map_src, bpe2word_map_tgt)):
+                aligns = set() if not output_prob else dict()
+                non_zeros = torch.nonzero(attention)
+                for i, j in non_zeros:
+                    word_pair = (b2w_src[i], b2w_tgt[j])
+                    if output_prob:
+                        prob = alignment_probs[idx, i, j] 
+                        if not word_pair in aligns:
+                            aligns[word_pair] = prob
+                        else:
+                            aligns[word_pair] = max(aligns[word_pair], prob)
                     else:
-                        aligns[word_pair] = max(aligns[word_pair], prob)
-                else:
-                    aligns.add(word_pair)
-            word_aligns.append(aligns)
+                        aligns.add(word_pair)
+                word_aligns.append(aligns)
 
         if test:
             return word_aligns

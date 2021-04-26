@@ -46,44 +46,73 @@ logger = logging.getLogger(__name__)
 import itertools
 
 class LineByLineTextDataset(Dataset):
-    def __init__(self, tokenizer: PreTrainedTokenizer, args, file_path):
+    def __init__(self, tokenizer: PreTrainedTokenizer, args, file_path, gold_path):
         assert os.path.isfile(file_path)
         logger.info("Creating features from dataset file at %s", file_path)
 
-        cache_fn = f'{file_path}.cache'
+        cache_fn = f'{file_path}.cache' if gold_path is None else f'{file_path}.gold.cache'
         if args.cache_data and os.path.isfile(cache_fn) and not args.overwrite_cache:
             logger.info("Loading cached data from %s", cache_fn)
             self.examples = torch.load(cache_fn)
         else:
+            # Loading text data
             self.examples = []
             with open(file_path, encoding="utf-8") as f:
-                for line in f.readlines():
-                    if len(line) > 0 and not line.isspace() and len(line.split(' ||| ')) == 2:
+                lines = f.readlines()
+            
+            # Loading gold data
+            if gold_path is not None:
+                assert os.path.isfile(gold_path)
+                logger.info("Loading gold alignments at %s", gold_path)
+                with open(gold_path, encoding="utf-8") as f:
+                    gold_lines = f.readlines()
+                assert len(gold_lines) == len(lines)
+
+            for line_id, line in tqdm(enumerate(lines), desc='Loading data', total=len(lines)):
+                if len(line) > 0 and not line.isspace() and len(line.split(' ||| ')) == 2:
+                    try:
+                        src, tgt = line.split(' ||| ')
+                        if src.rstrip() == '' or tgt.rstrip() == '':
+                            logger.info("Skipping instance %s", line)
+                            continue
+                    except:
+                        logger.info("Skipping instance %s", line)
+                        continue
+                    sent_src, sent_tgt = src.strip().split(), tgt.strip().split()
+                    token_src, token_tgt = [tokenizer.tokenize(word) for word in sent_src], [tokenizer.tokenize(word) for word in sent_tgt]
+                    wid_src, wid_tgt = [tokenizer.convert_tokens_to_ids(x) for x in token_src], [tokenizer.convert_tokens_to_ids(x) for x in token_tgt]
+
+                    ids_src, ids_tgt = tokenizer.prepare_for_model(list(itertools.chain(*wid_src)), return_tensors='pt', max_length=tokenizer.max_len)['input_ids'], tokenizer.prepare_for_model(list(itertools.chain(*wid_tgt)), return_tensors='pt', max_length=tokenizer.max_len)['input_ids']
+                    if len(ids_src[0]) == 2 or len(ids_tgt[0]) == 2:
+                        logger.info("Skipping instance %s", line)
+                        continue
+
+                    bpe2word_map_src = []
+                    for i, word_list in enumerate(token_src):
+                        bpe2word_map_src += [i for x in word_list]
+                    bpe2word_map_tgt = []
+                    for i, word_list in enumerate(token_tgt):
+                        bpe2word_map_tgt += [i for x in word_list]
+
+                    if gold_path is not None:
                         try:
-                            src, tgt = line.split(' ||| ')
-                            if src.rstrip() == '' or tgt.rstrip() == '':
-                                logger.info("Skipping instance %s", line)
-                                continue
+                            gold_line = gold_lines[line_id].strip().split()
+                            gold_word_pairs = []
+                            for src_tgt in gold_line:
+                                if 'p' in src_tgt:
+                                    if args.ignore_possible_alignments:
+                                        continue
+                                    wsrc, wtgt = src_tgt.split('p')
+                                else:
+                                    wsrc, wtgt = src_tgt.split('-')
+                                wsrc, wtgt = (int(wsrc), int(wtgt)) if not args.gold_one_index else (int(wsrc)-1, int(wtgt)-1)
+                                gold_word_pairs.append( (wsrc, wtgt) )
+                            self.examples.append( (ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt, gold_word_pairs) )
                         except:
-                            logger.info("Skipping instance %s", line)
+                            logger.info("Error when processing the gold alignment %s, skipping", gold_lines[line_id].strip())
                             continue
-                        sent_src, sent_tgt = src.strip().split(), tgt.strip().split()
-                        token_src, token_tgt = [tokenizer.tokenize(word) for word in sent_src], [tokenizer.tokenize(word) for word in sent_tgt]
-                        wid_src, wid_tgt = [tokenizer.convert_tokens_to_ids(x) for x in token_src], [tokenizer.convert_tokens_to_ids(x) for x in token_tgt]
-
-                        ids_src, ids_tgt = tokenizer.prepare_for_model(list(itertools.chain(*wid_src)), return_tensors='pt', max_length=tokenizer.max_len)['input_ids'], tokenizer.prepare_for_model(list(itertools.chain(*wid_tgt)), return_tensors='pt', max_length=tokenizer.max_len)['input_ids']
-                        if len(ids_src[0]) == 2 or len(ids_tgt[0]) == 2:
-                            logger.info("Skipping instance %s", line)
-                            continue
-
-                        bpe2word_map_src = []
-                        for i, word_list in enumerate(token_src):
-                            bpe2word_map_src += [i for x in word_list]
-                        bpe2word_map_tgt = []
-                        for i, word_list in enumerate(token_tgt):
-                            bpe2word_map_tgt += [i for x in word_list]
-
-                        self.examples.append( (ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt) )
+                    else:
+                        self.examples.append( (ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt, None) )
 
             if args.cache_data:
                 logger.info("Saving cached data to %s", cache_fn)
@@ -101,7 +130,8 @@ class LineByLineTextDataset(Dataset):
 
 def load_and_cache_examples(args, tokenizer, evaluate=False):
     file_path = args.eval_data_file if evaluate else args.train_data_file
-    return LineByLineTextDataset(tokenizer, args, file_path=file_path)
+    gold_path = args.eval_gold_file if evaluate else args.train_gold_file
+    return LineByLineTextDataset(tokenizer, args, file_path=file_path, gold_path=gold_path)
 
 
 def set_seed(args):
@@ -162,6 +192,7 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
         examples_src, examples_tgt, examples_srctgt, examples_tgtsrc, langid_srctgt, langid_tgtsrc, psi_examples_srctgt, psi_labels = [], [], [], [], [], [], [], []
         src_len = tgt_len = 0
         bpe2word_map_src, bpe2word_map_tgt = [], []
+        word_aligns = []
         for example in examples:
             end_id = example[0][0][-1].view(-1)
 
@@ -218,6 +249,7 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
 
             bpe2word_map_src.append(example[2])
             bpe2word_map_tgt.append(example[3])
+            word_aligns.append(example[4])
             
         examples_src = pad_sequence(examples_src, batch_first=True, padding_value=tokenizer.pad_token_id)
         examples_tgt = pad_sequence(examples_tgt, batch_first=True, padding_value=tokenizer.pad_token_id)
@@ -227,10 +259,12 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
         langid_tgtsrc = pad_sequence(langid_tgtsrc, batch_first=True, padding_value=tokenizer.pad_token_id)
         psi_examples_srctgt = pad_sequence(psi_examples_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
         psi_labels = torch.tensor(psi_labels)
+        if word_aligns[0] is None:
+            word_aligns = None
         if args.n_gpu > 1 or args.local_rank != -1:
-            guides = model.module.get_aligned_word(examples_src, examples_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, src_len, tgt_len, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold)
+            guides = model.module.get_aligned_word(examples_src, examples_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, src_len, tgt_len, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold, word_aligns=word_aligns)
         else:
-            guides = model.get_aligned_word(examples_src, examples_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, src_len, tgt_len, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold)
+            guides = model.get_aligned_word(examples_src, examples_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, src_len, tgt_len, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold, word_aligns=word_aligns)
 
         return examples_src, examples_tgt, guides, examples_srctgt, langid_srctgt, examples_tgtsrc, langid_tgtsrc, psi_examples_srctgt, psi_labels
 
@@ -414,6 +448,7 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
         examples_src, examples_tgt, examples_srctgt, examples_tgtsrc, langid_srctgt, langid_tgtsrc, psi_examples_srctgt, psi_labels = [], [], [], [], [], [], [], []
         src_len = tgt_len = 0
         bpe2word_map_src, bpe2word_map_tgt = [], []
+        word_aligns = []
         for example in examples:
             end_id = example[0][0][-1].view(-1)
 
@@ -459,6 +494,7 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
 
             bpe2word_map_src.append(example[2])
             bpe2word_map_tgt.append(example[3])
+            word_aligns.append(example[4])
 
             
         examples_src = pad_sequence(examples_src, batch_first=True, padding_value=tokenizer.pad_token_id)
@@ -469,7 +505,9 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
         langid_tgtsrc = pad_sequence(langid_tgtsrc, batch_first=True, padding_value=tokenizer.pad_token_id)
         psi_examples_srctgt = pad_sequence(psi_examples_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
         psi_labels = torch.tensor(psi_labels)
-        guides = model.get_aligned_word(examples_src, examples_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, src_len, tgt_len, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold)
+        if word_aligns[0] is None:
+            word_aligns = None
+        guides = model.get_aligned_word(examples_src, examples_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, src_len, tgt_len, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold, word_aligns=word_aligns)
 
         return examples_src, examples_tgt, guides, examples_srctgt, langid_srctgt, examples_tgtsrc, langid_tgtsrc, psi_examples_srctgt, psi_labels
 
@@ -570,6 +608,19 @@ def main():
     parser.add_argument("--train_so", action="store_true")
     parser.add_argument("--train_psi", action="store_true")
     parser.add_argument("--train_co", action="store_true")
+    # Supervised settings
+    parser.add_argument(
+        "--train_gold_file", default=None, type=str, help="Gold alignment for training data"
+    )
+    parser.add_argument(
+        "--eval_gold_file", default=None, type=str, help="Gold alignment for evaluation data"
+    )
+    parser.add_argument(
+        "--ignore_possible_alignments", action="store_true", help="Whether to ignore possible gold alignments"
+    )
+    parser.add_argument(
+        "--gold_one_index", action="store_true", help="Whether the gold alignment files are one-indexed"
+    )
     # Other parameters
     parser.add_argument("--cache_data", action="store_true", help='if cache the dataset')
     parser.add_argument("--align_layer", type=int, default=8, help="layer for alignment extraction")
