@@ -825,8 +825,6 @@ def main():
     else:
         logger.info("Training new model from scratch")
         model = model_class(config=config)
-    print(model.keys())
-    1/0
 
     model.to(args.device)
 
