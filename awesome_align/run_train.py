@@ -694,7 +694,7 @@ def main():
         "--max_steps",
         default=-1,
         type=int,
-        help="If > 0: set total number of training steps to perform. Override num_train_epochs.",
+        help="If > 0: set the maximum number of training steps to perform."
     )
     parser.add_argument("--warmup_steps", default=0, type=int, help="Linear warmup over warmup_steps.")
 
@@ -825,6 +825,8 @@ def main():
     else:
         logger.info("Training new model from scratch")
         model = model_class(config=config)
+    print(model.keys())
+    1/0
 
     model.to(args.device)
 
