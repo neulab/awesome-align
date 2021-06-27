@@ -29,7 +29,7 @@ CUDA_VISIBLE_DEVICES=0 awesome-align \
     --model_name_or_path=$MODEL_NAME_OR_PATH \
     --data_file=$DATA_FILE \
     --extraction 'softmax' \
-    --batch_size 32 \
+    --batch_size 32
 ```
 
 This produces outputs in the `i-j` Pharaoh format. A pair `i-j` indicates that the <i>i</i>th word (zero-indexed) of the source sentence is aligned to the <i>j</i>th word of the target sentence. 
@@ -64,7 +64,7 @@ CUDA_VISIBLE_DEVICES=0 awesome-train \
     --save_steps 4000 \
     --max_steps 20000 \
     --do_eval \
-    --eval_data_file=$EVAL_FILE \
+    --eval_data_file=$EVAL_FILE
 ```
 
 You can also fine-tune the model a bit longer with more training objectives for better quality:
@@ -92,7 +92,7 @@ CUDA_VISIBLE_DEVICES=0 awesome-train \
     --save_steps 10000 \
     --max_steps 40000 \
     --do_eval \
-    --eval_data_file=$EVAL_FILE \
+    --eval_data_file=$EVAL_FILE
 ```
 
 If you want high alignment recalls, you can turn on the `--train_co` option, but note that the alignment precisions may drop. You can set `--cache_dir` to specify where you want to cache multilingual BERT.
