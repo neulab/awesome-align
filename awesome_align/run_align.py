@@ -15,20 +15,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
+
 import argparse
 import random
 import itertools
 import os
-from multiprocessing import Pool, Process, SimpleQueue, cpu_count, Pipe
-import copy
-
+import shutil
+import tempfile
 
 import numpy as np
 import torch
 from tqdm import trange
 from torch.nn.utils.rnn import pad_sequence
-from torch.utils.data import DataLoader, Dataset, SequentialSampler
+from torch.utils.data import DataLoader, IterableDataset
 
 from awesome_align import modeling
 from awesome_align.configuration_bert import BertConfig
@@ -37,8 +36,6 @@ from awesome_align.tokenization_bert import BertTokenizer
 from awesome_align.tokenization_utils import PreTrainedTokenizer
 from awesome_align.modeling_utils import PreTrainedModel
 
-def takeFirst(elem):
-    return elem[0]
 
 def set_seed(args):
     if args.seed >= 0:
@@ -47,34 +44,30 @@ def set_seed(args):
         torch.manual_seed(args.seed)
         torch.cuda.manual_seed_all(args.seed)
 
-def insert_sentence_in_batch(idxs, sent_src, sent_tgt, ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt, sentence):
-    idxs.append(sentence[0])
-    sent_src.append(sentence[1])
-    sent_tgt.append(sentence[2])
-    ids_src.append(sentence[3])
-    ids_tgt.append(sentence[4])
-    bpe2word_map_src.append(sentence[5])
-    bpe2word_map_tgt.append(sentence[6])
+class LineByLineTextDataset(IterableDataset):
+    def __init__(self, tokenizer: PreTrainedTokenizer, file_path, offsets=None):
+        assert os.path.isfile(file_path)
+        print('Loading the dataset...')
+        self.examples = []
+        self.tokenizer = tokenizer
+        self.file_path = file_path
+        self.offsets = offsets
 
-
-def process_encoding(q_data: SimpleQueue, q_preprocessed : SimpleQueue, tokenizer: PreTrainedTokenizer, number_line, nb_preprocess):
-    End = False
-    while End != True:
-        idx, line = q_data.get()
-        if idx >= (number_line-nb_preprocess):
-            #print("C'est la fin de  process encoding")
-            End = True
+    def process_line(self, worker_id, line):
+        if len(line) == 0 or line.isspace() or not len(line.split(' ||| ')) == 2:
+            return None
+        
         src, tgt = line.split(' ||| ')
         if src.rstrip() == '' or tgt.rstrip() == '':
-            raise ValueError(f'Line {idx+1} is not in the correct format!')
+            return None
     
         sent_src, sent_tgt = src.strip().split(), tgt.strip().split()
-        token_src, token_tgt = [tokenizer.tokenize(word) for word in sent_src], [tokenizer.tokenize(word) for word in sent_tgt]
-        wid_src, wid_tgt = [tokenizer.convert_tokens_to_ids(x) for x in token_src], [tokenizer.convert_tokens_to_ids(x) for x in token_tgt]
+        token_src, token_tgt = [self.tokenizer.tokenize(word) for word in sent_src], [self.tokenizer.tokenize(word) for word in sent_tgt]
+        wid_src, wid_tgt = [self.tokenizer.convert_tokens_to_ids(x) for x in token_src], [self.tokenizer.convert_tokens_to_ids(x) for x in token_tgt]
 
-        ids_src, ids_tgt = tokenizer.prepare_for_model(list(itertools.chain(*wid_src)), return_tensors='pt', max_length=tokenizer.max_len)['input_ids'], tokenizer.prepare_for_model(list(itertools.chain(*wid_tgt)), return_tensors='pt', max_length=tokenizer.max_len)['input_ids']
+        ids_src, ids_tgt = self.tokenizer.prepare_for_model(list(itertools.chain(*wid_src)), return_tensors='pt', max_length=self.tokenizer.max_len)['input_ids'], self.tokenizer.prepare_for_model(list(itertools.chain(*wid_tgt)), return_tensors='pt', max_length=self.tokenizer.max_len)['input_ids']
         if len(ids_src[0]) == 2 or len(ids_tgt[0]) == 2:
-            raise ValueError(f'Line {idx+1} is not in the correct format!')
+            return None
 
         bpe2word_map_src = []
         for i, word_list in enumerate(token_src):
@@ -82,106 +75,128 @@ def process_encoding(q_data: SimpleQueue, q_preprocessed : SimpleQueue, tokenize
         bpe2word_map_tgt = []
         for i, word_list in enumerate(token_tgt):
             bpe2word_map_tgt += [i for x in word_list]
-        q_preprocessed.put(  (idx, sent_src, sent_tgt, ids_src[0], ids_tgt[0], bpe2word_map_src, bpe2word_map_tgt) )
-    time.sleep(10)
+        return (worker_id, ids_src[0], ids_tgt[0], bpe2word_map_src, bpe2word_map_tgt, sent_src, sent_tgt) 
 
-def feed_data(tokenizer: PreTrainedTokenizer, args, file_path, q_data : SimpleQueue):
-    assert os.path.isfile(file_path)
-    print('Loading the dataset...')
+    def __iter__(self):
+        if self.offsets is not None:
+            worker_info = torch.utils.data.get_worker_info()
+            worker_id = worker_info.id
+            offset_start = self.offsets[worker_id]
+            offset_end = self.offsets[worker_id+1] if worker_id+1 < len(self.offsets) else None
+        else:
+            offset_start = 0
+            offset_end = None
+            worker_id = 0
 
-    with open(file_path, encoding="utf-8") as f:
-        for idx, line in enumerate(f.readlines()):
-            if len(line) == 0 or line.isspace() or not len(line.split(' ||| ')) == 2:
-                raise ValueError('Line {idx+1} is not in the correct format!')
-            q_data.put( (idx, line) )
-
-def data_batch(q_preprocessed : SimpleQueue, q_batch, args, tokenizer : PreTrainedTokenizer, number_line):
-    number_batch = args.batch_size
-    current_row = 0
-    End = False
-    tmp_info = [] # Store wrong order sentences
-    while End != True:
-        idxs, sent_src, sent_tgt, ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt = ([] for i in range(7))
-        i = 0 
-        while i < args.batch_size:
-            if tmp_info == [] or tmp_info[-1][0] != current_row:
-                sentence = q_preprocessed.get()
-                if sentence[0] != current_row:
-                    tmp_info.append( sentence )
-                    tmp_info.sort(key=takeFirst, reverse=True)
+        with open(self.file_path, encoding="utf-8") as f:
+            f.seek(offset_start)
+            line = f.readline()
+            while line:
+                processed = self.process_line(worker_id, line)
+                if processed is None:
+                    print(f'Line "{line.strip()}" (offset in bytes: {f.tell()}) is not in the correct format. Skipping...')
+                    empty_tensor = torch.tensor([self.tokenizer.cls_token_id, 999, self.tokenizer.sep_token_id])
+                    empty_sent = ''
+                    yield (worker_id, empty_tensor, empty_tensor, [-1], [-1], empty_sent, empty_sent)
                 else:
-                    i += 1
-                    current_row += 1
-                    insert_sentence_in_batch(idxs, sent_src, sent_tgt, ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt, sentence)
-            if tmp_info != []:
-                while i < args.batch_size and tmp_info != [] and tmp_info[-1][0] == current_row:
+                    yield processed
+                if offset_end is not None and f.tell() >= offset_end:
+                    break
+                line = f.readline()
 
-                    if tmp_info[-1][0] == current_row:
-                        sentence = tmp_info.pop()
-                        current_row += 1
-                        i += 1
-                        insert_sentence_in_batch(idxs, sent_src, sent_tgt, ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt, sentence)
+def find_offsets(filename, num_workers):
+    if num_workers <= 1:
+        return None
+    with open(filename, "r", encoding="utf-8") as f:
+        size = os.fstat(f.fileno()).st_size
+        chunk_size = size // num_workers
+        offsets = [0]
+        for i in range(1, num_workers):
+            f.seek(chunk_size * i)
+            pos = f.tell()
+            while True:
+                try:
+                    l=f.readline()
+                    break
+                except UnicodeDecodeError:
+                    pos -= 1
+                    f.seek(pos)
+            offsets.append(f.tell())
+    return offsets
 
-            if current_row == number_line:
-                End = True
-                break                    
+def open_writer_list(filename, num_workers):
+    writer = open(filename, 'w+', encoding='utf-8')
+    writers = [writer]
+    if num_workers > 1:
+        writers.extend([tempfile.TemporaryFile(mode='w+', encoding='utf-8') for i in range(1, num_workers)])
+    return writers
 
+def merge_files(writers):
+    if len(writers) == 1:
+        writers[0].close()
+        return
+
+    for i, writer in enumerate(writers[1:], 1):
+        writer.seek(0)
+        shutil.copyfileobj(writer, writers[0])
+        writer.close()
+    writers[0].close()
+    return
+
+
+def word_align(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer):
+
+    def collate(examples):
+        worker_ids, ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt, sents_src, sents_tgt = zip(*examples)
         ids_src = pad_sequence(ids_src, batch_first=True, padding_value=tokenizer.pad_token_id)
         ids_tgt = pad_sequence(ids_tgt, batch_first=True, padding_value=tokenizer.pad_token_id)
-        q_batch.send( (idxs, sent_src, sent_tgt, ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt) )
-    time.sleep(15)
+        return worker_ids, ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt, sents_src, sents_tgt
 
-def word_align(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, q_batch, number_line, pipe_recovering):
-    End = False
+    offsets = find_offsets(args.data_file, args.num_workers)
+    dataset = LineByLineTextDataset(tokenizer, file_path=args.data_file, offsets=offsets)
+    dataloader = DataLoader(
+        dataset, batch_size=args.batch_size, collate_fn=collate, num_workers=args.num_workers
+    )
+
     model.to(args.device)
     model.eval()
-    with open(args.output_file, 'w') as writer:
-        with torch.no_grad():
-            while End != True:
-                batch = q_batch.recv()
-                idxs, sent_src, sent_tgt, ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt = batch
-                word_aligns_list = model.get_aligned_word(ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, 0, 0, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold, test=True, output_prob=(args.output_prob_file is not None))
-                pipe_recovering.send( (idxs, sent_src, sent_tgt, word_aligns_list) )
-                if idxs[-1] == number_line-1:
-                    End = True
+    tqdm_iterator = trange(0, desc="Extracting")
 
-def file_len(fname):
-    with open(fname) as f:
-        for i, l in enumerate(f):
-            pass
-    return i + 1
-
-def alignement_recovering(p, args, number_line):
-    end = False
-    tqdm_iterator = trange(number_line, desc="Extracting")
+    writers = open_writer_list(args.output_file, args.num_workers) 
     if args.output_prob_file is not None:
-        prob_writer = open(args.output_prob_file, 'w')
-    with open(args.output_file, 'w') as writer:
-        while end != True:
-            idxs, sent_src, sent_tgt, word_aligns_list = p.recv()
-            output_str = []
-            for idx, word_aligns in enumerate(word_aligns_list):
+        prob_writers = open_writer_list(args.output_prob_file, args.num_workers)
+    if args.output_word_file is not None:
+        word_writers = open_writer_list(args.output_word_file, args.num_workers)
+
+    for batch in dataloader:
+        with torch.no_grad():
+            worker_ids, ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt, sents_src, sents_tgt = batch
+            word_aligns_list = model.get_aligned_word(ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, 0, 0, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold, test=True, output_prob=(args.output_prob_file is not None))
+            for worker_id, word_aligns, sent_src, sent_tgt in zip(worker_ids, word_aligns_list, sents_src, sents_tgt):
                 output_str = []
                 if args.output_prob_file is not None:
                     output_prob_str = []
+                if args.output_word_file is not None:
+                    output_word_str = []
                 for word_align in word_aligns:
-                    if args.word_output:
-                        output_str.append(f'{sent_src[idx][word_align[0]]}  {sent_tgt[idx][word_align[1]]}')
-                    else:
+                    if word_align[0] != -1:
                         output_str.append(f'{word_align[0]}-{word_align[1]}')
-                    if args.output_prob_file is not None:
-                        output_prob_str.append(f'{word_aligns[word_align]}')
-                if args.word_output:
-                    writer.write('\n'.join(output_str)+'\n')
-                else :
-                    writer.write(' '.join(output_str)+'\n')
+                        if args.output_prob_file is not None:
+                            output_prob_str.append(f'{word_aligns[word_align]}')
+                        if args.output_word_file is not None:
+                            output_word_str.append(f'{sent_src[word_align[0]]}<sep>{sent_tgt[word_align[1]]}')
+                writers[worker_id].write(' '.join(output_str)+'\n')
                 if args.output_prob_file is not None:
-                    prob_writer.write(' '.join(output_prob_str)+'\n')
-            tqdm_iterator.update(len(idxs))
-            if idxs[-1] == number_line-1:
-                end = True
+                    prob_writers[worker_id].write(' '.join(output_prob_str)+'\n')
+                if args.output_word_file is not None:
+                    word_writers[worker_id].write(' '.join(output_word_str)+'\n')
+            tqdm_iterator.update(len(ids_src))
 
-            
+    merge_files(writers)
+    if args.output_prob_file is not None:
+        merge_files(prob_writers)
+    if args.output_word_file is not None:
+        merge_files(word_writers)
 
 
 def main():
@@ -206,6 +221,9 @@ def main():
     )
     parser.add_argument(
         "--output_prob_file", default=None, type=str, help='The output probability file.'
+    )
+    parser.add_argument(
+        "--output_word_file", default=None, type=str, help='The output word file.'
     )
     parser.add_argument(
         "--model_name_or_path",
@@ -234,11 +252,11 @@ def main():
         help="Optional directory to store the pre-trained models downloaded from s3 (instead of the default one)",
     )
     parser.add_argument("--no_cuda", action="store_true", help="Avoid using CUDA when available")
-    parser.add_argument("--nb_preprocess", type=int, default=int(cpu_count()/2), help="Number of process that run preprocessing, default = cpu_count / 2")
-    parser.add_argument("--word_output", action="store_true", help="Write align-word in the output")
+    parser.add_argument("--num_workers", type=int, default=4, help="Number of workers for data loading")
     args = parser.parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
     args.device = device
+
     # Set seed
     set_seed(args)
     config_class, model_class, tokenizer_class = BertConfig, BertForMaskedLM, BertTokenizer
@@ -273,38 +291,7 @@ def main():
     else:
         model = model_class(config=config)
 
-
-    number_line = file_len(args.data_file)
-    jobs = []
-    q_data = SimpleQueue()
-    q_batch = Pipe()
-    q_preprocessed = SimpleQueue()
-
-    # Creation of preprocessing process 
-    for i in range(args.nb_preprocess):
-        p = Process(target=process_encoding, args=(q_data, q_preprocessed, copy.deepcopy(tokenizer), number_line, args.nb_preprocess))
-        p.start()
-        jobs.append(p)
-
-    # Creation of feed_data process (could change that to a thread but it's not faster)
-    p = Process(target=feed_data, args=(tokenizer, args, args.data_file, q_data))
-    p.start()
-    jobs.append(p)
-    p = Process(target=data_batch, args=(q_preprocessed, q_batch[1], args, copy.deepcopy(tokenizer), number_line))
-    p.start()
-    jobs.append(p)
-    #alignement_recovering, (could change that to a thread but it's not faster)
-    pipe = Pipe()
-    p = Process(target=alignement_recovering, args=(pipe[0], args, number_line))
-    p.start()
-    jobs.append(p)
-
-    #Run word, alignement
-    word_align(args, model, tokenizer, q_batch[0], number_line, pipe[1])
-
-
-    for process in jobs:
-        process.join()
+    word_align(args, model, tokenizer)
 
 if __name__ == "__main__":
     main()
