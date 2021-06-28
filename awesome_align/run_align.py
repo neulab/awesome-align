@@ -21,6 +21,7 @@ import random
 import itertools
 import os
 import shutil
+import tempfile
 
 import numpy as np
 import torch
@@ -124,10 +125,10 @@ def find_offsets(filename, num_workers):
     return offsets
 
 def open_writer_list(filename, num_workers):
-    writer = open(filename, 'w+')
+    writer = open(filename, 'w+', encoding='utf-8')
     writers = [writer]
     if num_workers > 1:
-        writers.extend([open(f'{filename}.temp.{i}', 'w+') for i in range(1, num_workers)])
+        writers.extend([tempfile.TemporaryFile(mode='w+', encoding='utf-8') for i in range(1, num_workers)])
     return writers
 
 def merge_files(filename, writers):
@@ -139,7 +140,6 @@ def merge_files(filename, writers):
         writer.seek(0)
         shutil.copyfileobj(writer, writers[0])
         writer.close()
-        os.remove(f'{filename}.temp.{i}')
     writers[0].close()
     return
 
@@ -184,7 +184,7 @@ def word_align(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer):
                         if args.output_prob_file is not None:
                             output_prob_str.append(f'{word_aligns[word_align]}')
                         if args.output_word_file is not None:
-                            output_word_str.append(f'{sent_src[word_align[0]]}-{sent_tgt[word_align[1]]}')
+                            output_word_str.append(f'{sent_src[word_align[0]]}<sep>{sent_tgt[word_align[1]]}')
                 writers[worker_id].write(' '.join(output_str)+'\n')
                 if args.output_prob_file is not None:
                     prob_writers[worker_id].write(' '.join(output_prob_str)+'\n')
@@ -252,7 +252,7 @@ def main():
         help="Optional directory to store the pre-trained models downloaded from s3 (instead of the default one)",
     )
     parser.add_argument("--no_cuda", action="store_true", help="Avoid using CUDA when available")
-    parser.add_argument("--num_workers", type=int, default=0, help="Number of workers for data loading")
+    parser.add_argument("--num_workers", type=int, default=4, help="Number of workers for data loading")
     args = parser.parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
     args.device = device
