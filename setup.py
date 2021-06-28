@@ -5,14 +5,14 @@ setup(
     name='awesome_align',
     install_requires=[
         'tokenizers>=0.5.2',
-        'torch>=1.1.0',
+        'torch>=1.2.0',
         'tqdm',
         'numpy',
         'boto3',
         'filelock',
         'requests'
     ],
-    version='0.1.5',
+    version='0.1.6',
     author='NeuLab',
     author_email='zdou0830@gmail.com',
     license='BSD 3-Clause',
