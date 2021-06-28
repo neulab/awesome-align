@@ -131,7 +131,7 @@ def open_writer_list(filename, num_workers):
         writers.extend([tempfile.TemporaryFile(mode='w+', encoding='utf-8') for i in range(1, num_workers)])
     return writers
 
-def merge_files(filename, writers):
+def merge_files(writers):
     if len(writers) == 1:
         writers[0].close()
         return
@@ -192,11 +192,11 @@ def word_align(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer):
                     word_writers[worker_id].write(' '.join(output_word_str)+'\n')
             tqdm_iterator.update(len(ids_src))
 
-    merge_files(args.output_file, writers)
+    merge_files(writers)
     if args.output_prob_file is not None:
-        merge_files(args.output_prob_file, prob_writers)
+        merge_files(prob_writers)
     if args.output_word_file is not None:
-        merge_files(args.output_word_file, word_writers)
+        merge_files(word_writers)
 
 
 def main():
