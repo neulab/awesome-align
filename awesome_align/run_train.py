@@ -33,9 +33,9 @@ from tqdm import tqdm, trange
 
 from awesome_align import modeling
 from awesome_align.train_utils import _sorted_checkpoints, _rotate_checkpoints, WEIGHTS_NAME, AdamW, get_linear_schedule_with_warmup
-from awesome_align.configuration_bert import BertConfig
-from awesome_align.modeling import BertForMaskedLM
-from awesome_align.tokenization_bert import BertTokenizer
+from awesome_align.configuration_xlmr import XLMRobertaConfig
+from awesome_align.modeling_xlmr import XLMRobertaForMaskedLM
+from awesome_align.tokenization_xlmr import XLMRobertaTokenizer
 from awesome_align.tokenization_utils import PreTrainedTokenizer
 from awesome_align.modeling_utils import PreTrainedModel
 
@@ -82,7 +82,7 @@ class LineByLineTextDataset(Dataset):
                     token_src, token_tgt = [tokenizer.tokenize(word) for word in sent_src], [tokenizer.tokenize(word) for word in sent_tgt]
                     wid_src, wid_tgt = [tokenizer.convert_tokens_to_ids(x) for x in token_src], [tokenizer.convert_tokens_to_ids(x) for x in token_tgt]
 
-                    ids_src, ids_tgt = tokenizer.prepare_for_model(list(itertools.chain(*wid_src)), return_tensors='pt', max_length=tokenizer.max_len)['input_ids'], tokenizer.prepare_for_model(list(itertools.chain(*wid_tgt)), return_tensors='pt', max_length=tokenizer.max_len)['input_ids']
+                    ids_src, ids_tgt = tokenizer.prepare_for_model(list(itertools.chain(*wid_src)), return_tensors='pt', max_length=tokenizer.max_len, truncation=True)['input_ids'], tokenizer.prepare_for_model(list(itertools.chain(*wid_tgt)), return_tensors='pt', max_length=tokenizer.max_len, truncation=True)['input_ids']
                     if len(ids_src[0]) == 2 or len(ids_tgt[0]) == 2:
                         logger.info("Skipping instance %s", line)
                         continue
@@ -786,7 +786,7 @@ def main():
     if args.local_rank not in [-1, 0]:
         torch.distributed.barrier()  # Barrier to make sure only the first process in distributed training download model & vocab
 
-    config_class, model_class, tokenizer_class = BertConfig, BertForMaskedLM, BertTokenizer
+    config_class, model_class, tokenizer_class = XLMRobertaConfig, XLMRobertaForMaskedLM, XLMRobertaTokenizer
 
     if args.config_name:
         config = config_class.from_pretrained(args.config_name, cache_dir=args.cache_dir)

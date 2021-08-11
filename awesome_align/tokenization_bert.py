@@ -23,7 +23,7 @@ from typing import List, Optional
 
 from tokenizers import BertWordPieceTokenizer
 
-from awesome_align.tokenization_utils import PreTrainedTokenizer, PreTrainedTokenizerFast
+from awesome_align.tokenization_utils import PreTrainedTokenizer
 
 
 logger = logging.getLogger(__name__)
@@ -582,57 +582,3 @@ def _is_punctuation(char):
     return False
 
 
-class BertTokenizerFast(PreTrainedTokenizerFast):
-    vocab_files_names = VOCAB_FILES_NAMES
-    pretrained_vocab_files_map = PRETRAINED_VOCAB_FILES_MAP
-    pretrained_init_configuration = PRETRAINED_INIT_CONFIGURATION
-    max_model_input_sizes = PRETRAINED_POSITIONAL_EMBEDDINGS_SIZES
-
-    def __init__(
-        self,
-        vocab_file,
-        do_lower_case=True,
-        do_basic_tokenize=True,
-        never_split=None,
-        unk_token="[UNK]",
-        sep_token="[SEP]",
-        pad_token="[PAD]",
-        cls_token="[CLS]",
-        mask_token="[MASK]",
-        clean_text=True,
-        tokenize_chinese_chars=True,
-        add_special_tokens=True,
-        strip_accents=True,
-        wordpieces_prefix="##",
-        **kwargs
-    ):
-        super().__init__(
-            BertWordPieceTokenizer(
-                vocab_file=vocab_file,
-                add_special_tokens=add_special_tokens,
-                unk_token=unk_token,
-                sep_token=sep_token,
-                cls_token=cls_token,
-                clean_text=clean_text,
-                handle_chinese_chars=tokenize_chinese_chars,
-                strip_accents=strip_accents,
-                lowercase=do_lower_case,
-                wordpieces_prefix=wordpieces_prefix,
-            ),
-            unk_token=unk_token,
-            sep_token=sep_token,
-            pad_token=pad_token,
-            cls_token=cls_token,
-            mask_token=mask_token,
-            **kwargs,
-        )
-
-        self.do_lower_case = do_lower_case
-
-    def build_inputs_with_special_tokens(self, token_ids_0, token_ids_1=None):
-        output = [self.cls_token_id] + token_ids_0 + [self.sep_token_id]
-
-        if token_ids_1:
-            output += token_ids_1 + [self.sep_token_id]
-
-        return output

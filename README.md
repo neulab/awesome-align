@@ -1,6 +1,6 @@
 ## AWESOME: Aligning Word Embedding Spaces of Multilingual Encoders
 
-`awesome-align` is a tool that can extract word alignments from multilingual BERT (mBERT) [[Demo]](https://colab.research.google.com/drive/1205ubqebM0OsZa1nRgbGJBtitgHqIVv6?usp=sharing) and allows you to fine-tune mBERT on parallel corpora for better alignment quality (see [our paper](https://arxiv.org/abs/2101.08231) for more details).
+This is the XLM-R version of `awesome-align`.
 
 ### Dependencies
 
@@ -17,11 +17,11 @@ Inputs should be *tokenized* and each line is a source language sentence and its
 
 ### Extracting alignments
 
-Here is an example of extracting word alignments from multilingual BERT:
+Here is an example of extracting word alignments XLM-R:
 
 ```bash
 DATA_FILE=/path/to/data/file
-MODEL_NAME_OR_PATH=bert-base-multilingual-cased
+MODEL_NAME_OR_PATH=xlm-roberta-base
 OUTPUT_FILE=/path/to/output/file
 
 CUDA_VISIBLE_DEVICES=0 awesome-align \
@@ -42,7 +42,7 @@ You can also set `MODEL_NAME_OR_PATH` to the path of your fine-tuned model as sh
 
 If there is parallel data available, you can fine-tune embedding models on that data.
 
-Here is an example of fine-tuning mBERT that balances well between efficiency and effectiveness:
+Here is an example of fine-tuning XLM-R:
 
 ```bash
 TRAIN_FILE=/path/to/train/file
@@ -51,7 +51,7 @@ OUTPUT_DIR=/path/to/output/directory
 
 CUDA_VISIBLE_DEVICES=0 awesome-train \
     --output_dir=$OUTPUT_DIR \
-    --model_name_or_path=bert-base-multilingual-cased \
+    --model_name_or_path=xlm-roberta-base \
     --extraction 'softmax' \
     --do_train \
     --train_tlm \
@@ -76,7 +76,7 @@ OUTPUT_DIR=/path/to/output/directory
 
 CUDA_VISIBLE_DEVICES=0 awesome-train \
     --output_dir=$OUTPUT_DIR \
-    --model_name_or_path=bert-base-multilingual-cased \
+    --model_name_or_path=xlm-roberta-base \
     --extraction 'softmax' \
     --do_train \
     --train_mlm \
@@ -108,7 +108,7 @@ OUTPUT_DIR=/path/to/output/directory
 
 CUDA_VISIBLE_DEVICES=0 awesome-train \
     --output_dir=$OUTPUT_DIR \
-    --model_name_or_path=bert-base-multilingual-cased \
+    --model_name_or_path=xlm-roberta-base \
     --extraction 'softmax' \
     --do_train \
     --train_so \
@@ -132,9 +132,8 @@ The following table shows the alignment error rates (AERs) of our models and pop
 | [fast\_align](https://github.com/clab/fast_align) | 27.0 | 10.5 | 32.1 | 51.1 | 38.1 |
 | [eflomal](https://github.com/robertostling/eflomal) | 22.6 | 8.2 | 25.1 | 47.5 | 28.7 |
 | [Mgiza](https://github.com/moses-smt/mgiza)    | 20.6 | 5.9 | 26.4 | 48.0 | 35.1 |
-| Ours (w/o fine-tuning, softmax) | 17.4 | 5.6 | 27.9 | 45.6 | 18.1 |
-| Ours (multilingually fine-tuned <br/>  w/o `--train_co`, softmax) [[Download]](https://drive.google.com/file/d/1IcQx6t5qtv4bdcGjjVCwXnRkpr67eisJ/view?usp=sharing) | 15.2 | **4.1** | 22.6 | **37.4** | **13.4** |
-| Ours (multilingually fine-tuned <br/>  w/ `--train_co`, softmax) [[Download]](https://drive.google.com/file/d/1IluQED1jb0rjITJtyj4lNMPmaRFyMslg/view?usp=sharing) |  **15.1** | 4.5 | **20.7** | 38.4 | 14.5 |
+| Ours-mBERT (w/o fine-tuning, softmax) | 17.4 | 5.6 | 27.9 | 45.6 | 18.1 |
+| Ours-XLM-R (w/o fine-tuning, softmax) | 23.1 | 9.2 | 28.6 | 62.0 | 30.7 |
 
 
 ### Citation

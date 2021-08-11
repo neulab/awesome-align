@@ -30,9 +30,9 @@ from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, IterableDataset
 
 from awesome_align import modeling
-from awesome_align.configuration_bert import BertConfig
-from awesome_align.modeling import BertForMaskedLM
-from awesome_align.tokenization_bert import BertTokenizer
+from awesome_align.configuration_xlmr import XLMRobertaConfig
+from awesome_align.modeling_xlmr import XLMRobertaForMaskedLM
+from awesome_align.tokenization_xlmr import XLMRobertaTokenizer
 from awesome_align.tokenization_utils import PreTrainedTokenizer
 from awesome_align.modeling_utils import PreTrainedModel
 
@@ -65,7 +65,7 @@ class LineByLineTextDataset(IterableDataset):
         token_src, token_tgt = [self.tokenizer.tokenize(word) for word in sent_src], [self.tokenizer.tokenize(word) for word in sent_tgt]
         wid_src, wid_tgt = [self.tokenizer.convert_tokens_to_ids(x) for x in token_src], [self.tokenizer.convert_tokens_to_ids(x) for x in token_tgt]
 
-        ids_src, ids_tgt = self.tokenizer.prepare_for_model(list(itertools.chain(*wid_src)), return_tensors='pt', max_length=self.tokenizer.max_len)['input_ids'], self.tokenizer.prepare_for_model(list(itertools.chain(*wid_tgt)), return_tensors='pt', max_length=self.tokenizer.max_len)['input_ids']
+        ids_src, ids_tgt = self.tokenizer.prepare_for_model(list(itertools.chain(*wid_src)), return_tensors='pt', max_length=self.tokenizer.max_len, truncation=True)['input_ids'], self.tokenizer.prepare_for_model(list(itertools.chain(*wid_tgt)), return_tensors='pt', max_length=self.tokenizer.max_len, truncation=True)['input_ids']
         if len(ids_src[0]) == 2 or len(ids_tgt[0]) == 2:
             return None
 
@@ -259,7 +259,7 @@ def main():
 
     # Set seed
     set_seed(args)
-    config_class, model_class, tokenizer_class = BertConfig, BertForMaskedLM, BertTokenizer
+    config_class, model_class, tokenizer_class = XLMRobertaConfig, XLMRobertaForMaskedLM, XLMRobertaTokenizer
     if args.config_name:
         config = config_class.from_pretrained(args.config_name, cache_dir=args.cache_dir)
     elif args.model_name_or_path:

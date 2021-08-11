@@ -32,9 +32,9 @@ from awesome_align.file_utils import add_start_docstrings, add_start_docstrings_
 from awesome_align.modeling_utils import PreTrainedModel
 from awesome_align.sparsemax import sparsemax, entmax15
 
-PAD_ID=0
-CLS_ID=101
-SEP_ID=102
+PAD_ID=1
+CLS_ID=0
+SEP_ID=2
 
 logger = logging.getLogger(__name__)
 
