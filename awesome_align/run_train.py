@@ -23,6 +23,11 @@ import os
 import random
 import re
 from typing import Dict, List, Tuple
+from functools import partial
+from itertools import repeat
+import multiprocessing
+from multiprocessing import Pool, freeze_support
+
 
 import numpy as np
 import torch
@@ -32,7 +37,13 @@ from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm, trange
 
 from awesome_align import modeling
-from awesome_align.train_utils import _sorted_checkpoints, _rotate_checkpoints, WEIGHTS_NAME, AdamW, get_linear_schedule_with_warmup
+from awesome_align.train_utils import (
+    _sorted_checkpoints,
+    _rotate_checkpoints,
+    WEIGHTS_NAME,
+    AdamW,
+    get_linear_schedule_with_warmup,
+)
 from awesome_align.configuration_bert import BertConfig
 from awesome_align.modeling import BertForMaskedLM
 from awesome_align.tokenization_bert import BertTokenizer
@@ -40,17 +51,105 @@ from awesome_align.tokenization_utils import PreTrainedTokenizer
 from awesome_align.modeling_utils import PreTrainedModel
 
 
-
 logger = logging.getLogger(__name__)
 
 import itertools
 
+
 class LineByLineTextDataset(Dataset):
+    def process_line(self, lines, gold_path, tokenizer):
+        processed_line_from_single_processor = []
+        count = 0
+        for line_id, line in enumerate(lines):
+            if len(line) > 0 and not line.isspace() and len(line.split(" ||| ")) == 2:
+                try:
+                    src, tgt = line.split(" ||| ")
+
+                    if src.rstrip() == "" or tgt.rstrip() == "":
+                        # logger.info("Skipping instance Reason no src or tgt line%s", line)
+                        count += 1
+                        continue
+                except:
+                    # logger.info("Skipping instance reason line number 65%s", line)
+                    count += 1
+                    continue
+                sent_src, sent_tgt = src.strip().split(), tgt.strip().split()
+                token_src, token_tgt = [
+                    tokenizer.tokenize(word) for word in sent_src
+                ], [tokenizer.tokenize(word) for word in sent_tgt]
+                wid_src, wid_tgt = [
+                    tokenizer.convert_tokens_to_ids(x) for x in token_src
+                ], [tokenizer.convert_tokens_to_ids(x) for x in token_tgt]
+
+                ids_src, ids_tgt = (
+                    tokenizer.prepare_for_model(
+                        list(itertools.chain(*wid_src)),
+                        return_tensors="pt",
+                        max_length=tokenizer.max_len,
+                    )["input_ids"],
+                    tokenizer.prepare_for_model(
+                        list(itertools.chain(*wid_tgt)),
+                        return_tensors="pt",
+                        max_length=tokenizer.max_len,
+                    )["input_ids"],
+                )
+                if len(ids_src[0]) == 2 or len(ids_tgt[0]) == 2:
+                    # logger.info("Skipping instance 73%s", line)
+                    count += 1
+                    continue
+
+                bpe2word_map_src = []
+                for i, word_list in enumerate(token_src):
+                    bpe2word_map_src += [i for x in word_list]
+                bpe2word_map_tgt = []
+                for i, word_list in enumerate(token_tgt):
+                    bpe2word_map_tgt += [i for x in word_list]
+
+                if gold_path is not None:
+                    try:
+                        gold_line = gold_lines[line_id].strip().split()
+                        gold_word_pairs = []
+                        for src_tgt in gold_line:
+                            if "p" in src_tgt:
+                                if args.ignore_possible_alignments:
+                                    continue
+                                wsrc, wtgt = src_tgt.split("p")
+                            else:
+                                wsrc, wtgt = src_tgt.split("-")
+                            wsrc, wtgt = (
+                                (int(wsrc), int(wtgt))
+                                if not args.gold_one_index
+                                else (int(wsrc) - 1, int(wtgt) - 1)
+                            )
+                            gold_word_pairs.append((wsrc, wtgt))
+                        processed_line_from_single_processor.append(
+                            (
+                                ids_src,
+                                ids_tgt,
+                                bpe2word_map_src,
+                                bpe2word_map_tgt,
+                                gold_word_pairs,
+                            )
+                        )
+                    except:
+                        logger.info(
+                            "Error when processing the gold alignment %s, skipping",
+                            gold_lines[line_id].strip(),
+                        )
+                        continue
+                else:
+                    processed_line_from_single_processor.append(
+                        (ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt, None)
+                    )
+        return processed_line_from_single_processor
+
     def __init__(self, tokenizer: PreTrainedTokenizer, args, file_path, gold_path):
         assert os.path.isfile(file_path)
         logger.info("Creating features from dataset file at %s", file_path)
 
-        cache_fn = f'{file_path}.cache' if gold_path is None else f'{file_path}.gold.cache'
+        cache_fn = (
+            f"{file_path}.cache" if gold_path is None else f"{file_path}.gold.cache"
+        )
         if args.cache_data and os.path.isfile(cache_fn) and not args.overwrite_cache:
             logger.info("Loading cached data from %s", cache_fn)
             self.examples = torch.load(cache_fn)
@@ -59,7 +158,7 @@ class LineByLineTextDataset(Dataset):
             self.examples = []
             with open(file_path, encoding="utf-8") as f:
                 lines = f.readlines()
-            
+
             # Loading gold data
             if gold_path is not None:
                 assert os.path.isfile(gold_path)
@@ -68,51 +167,28 @@ class LineByLineTextDataset(Dataset):
                     gold_lines = f.readlines()
                 assert len(gold_lines) == len(lines)
 
-            for line_id, line in tqdm(enumerate(lines), desc='Loading data', total=len(lines)):
-                if len(line) > 0 and not line.isspace() and len(line.split(' ||| ')) == 2:
-                    try:
-                        src, tgt = line.split(' ||| ')
-                        if src.rstrip() == '' or tgt.rstrip() == '':
-                            logger.info("Skipping instance %s", line)
-                            continue
-                    except:
-                        logger.info("Skipping instance %s", line)
-                        continue
-                    sent_src, sent_tgt = src.strip().split(), tgt.strip().split()
-                    token_src, token_tgt = [tokenizer.tokenize(word) for word in sent_src], [tokenizer.tokenize(word) for word in sent_tgt]
-                    wid_src, wid_tgt = [tokenizer.convert_tokens_to_ids(x) for x in token_src], [tokenizer.convert_tokens_to_ids(x) for x in token_tgt]
+            total_core_count = multiprocessing.cpu_count()
+            num_lines_in_each_split = int(len(lines) / total_core_count)
+            start = 0
+            end = 0
+            start_end_array = []
+            for line_start in range(total_core_count):
+                end = min(len(lines), start + num_lines_in_each_split)
+                print(start, end)
+                start_end_array.append(lines[start:end])
+                start = end
 
-                    ids_src, ids_tgt = tokenizer.prepare_for_model(list(itertools.chain(*wid_src)), return_tensors='pt', max_length=tokenizer.max_len)['input_ids'], tokenizer.prepare_for_model(list(itertools.chain(*wid_tgt)), return_tensors='pt', max_length=tokenizer.max_len)['input_ids']
-                    if len(ids_src[0]) == 2 or len(ids_tgt[0]) == 2:
-                        logger.info("Skipping instance %s", line)
-                        continue
+            with Pool() as pool:
+                multiprocessing_arrays = pool.starmap(
+                    self.process_line,
+                    zip(start_end_array, repeat(gold_path), repeat(tokenizer)),
+                )
 
-                    bpe2word_map_src = []
-                    for i, word_list in enumerate(token_src):
-                        bpe2word_map_src += [i for x in word_list]
-                    bpe2word_map_tgt = []
-                    for i, word_list in enumerate(token_tgt):
-                        bpe2word_map_tgt += [i for x in word_list]
+            for multiprocessing_array in multiprocessing_arrays:
+                for temp in multiprocessing_array:
+                    self.examples.append(temp)
 
-                    if gold_path is not None:
-                        try:
-                            gold_line = gold_lines[line_id].strip().split()
-                            gold_word_pairs = []
-                            for src_tgt in gold_line:
-                                if 'p' in src_tgt:
-                                    if args.ignore_possible_alignments:
-                                        continue
-                                    wsrc, wtgt = src_tgt.split('p')
-                                else:
-                                    wsrc, wtgt = src_tgt.split('-')
-                                wsrc, wtgt = (int(wsrc), int(wtgt)) if not args.gold_one_index else (int(wsrc)-1, int(wtgt)-1)
-                                gold_word_pairs.append( (wsrc, wtgt) )
-                            self.examples.append( (ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt, gold_word_pairs) )
-                        except:
-                            logger.info("Error when processing the gold alignment %s, skipping", gold_lines[line_id].strip())
-                            continue
-                    else:
-                        self.examples.append( (ids_src, ids_tgt, bpe2word_map_src, bpe2word_map_tgt, None) )
+            print(len(self.examples))
 
             if args.cache_data:
                 logger.info("Saving cached data to %s", cache_fn)
@@ -122,16 +198,18 @@ class LineByLineTextDataset(Dataset):
         return len(self.examples)
 
     def __getitem__(self, i):
-        neg_i = random.randint(0, len(self.examples)-1)
+        neg_i = random.randint(0, len(self.examples) - 1)
         while neg_i == i:
-            neg_i = random.randint(0, len(self.examples)-1)
-        return tuple(list(self.examples[i]) + list(self.examples[neg_i][:2] ) )
+            neg_i = random.randint(0, len(self.examples) - 1)
+        return tuple(list(self.examples[i]) + list(self.examples[neg_i][:2]))
 
 
 def load_and_cache_examples(args, tokenizer, evaluate=False):
     file_path = args.eval_data_file if evaluate else args.train_data_file
     gold_path = args.eval_gold_file if evaluate else args.train_gold_file
-    return LineByLineTextDataset(tokenizer, args, file_path=file_path, gold_path=gold_path)
+    return LineByLineTextDataset(
+        tokenizer, args, file_path=file_path, gold_path=gold_path
+    )
 
 
 def set_seed(args):
@@ -142,7 +220,13 @@ def set_seed(args):
         torch.cuda.manual_seed_all(args.seed)
 
 
-def mask_tokens(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, args, langid_mask=None, lang_id=None) -> Tuple[torch.Tensor, torch.Tensor]:
+def mask_tokens(
+    inputs: torch.Tensor,
+    tokenizer: PreTrainedTokenizer,
+    args,
+    langid_mask=None,
+    lang_id=None,
+) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Prepare masked tokens inputs/labels for masked language modeling: 80% MASK, 10% random, 10% original.
     """
@@ -151,15 +235,18 @@ def mask_tokens(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, args, lang
         raise ValueError(
             "This tokenizer does not have a mask token which is necessary for masked language modeling. Remove the --mlm flag if you want to use this tokenizer."
         )
-    mask_type = torch.bool
+    mask_type = torch.bool if torch.__version__ >= "1.2" else torch.uint8
 
     labels = inputs.clone()
     # We sample a few tokens in each sequence for masked-LM training (with probability args.mlm_probability defaults to 0.15 in Bert/RoBERTa)
     probability_matrix = torch.full(labels.shape, args.mlm_probability)
     special_tokens_mask = [
-        tokenizer.get_special_tokens_mask(val, already_has_special_tokens=True) for val in labels.tolist()
+        tokenizer.get_special_tokens_mask(val, already_has_special_tokens=True)
+        for val in labels.tolist()
     ]
-    probability_matrix.masked_fill_(torch.tensor(special_tokens_mask, dtype=mask_type), value=0.0)
+    probability_matrix.masked_fill_(
+        torch.tensor(special_tokens_mask, dtype=mask_type), value=0.0
+    )
     if tokenizer._pad_token is not None:
         padding_mask = labels.eq(tokenizer.pad_token_id)
         probability_matrix.masked_fill_(padding_mask, value=0.0)
@@ -167,16 +254,22 @@ def mask_tokens(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, args, lang
     if langid_mask is not None:
         padding_mask = langid_mask.eq(lang_id)
         probability_matrix.masked_fill_(padding_mask, value=0.0)
-        
+
     masked_indices = torch.bernoulli(probability_matrix).to(mask_type)
     labels[~masked_indices] = -100  # We only compute loss on masked tokens
 
     # 80% of the time, we replace masked input tokens with tokenizer.mask_token ([MASK])
-    indices_replaced = torch.bernoulli(torch.full(labels.shape, 0.8)).to(mask_type) & masked_indices
+    indices_replaced = (
+        torch.bernoulli(torch.full(labels.shape, 0.8)).to(mask_type) & masked_indices
+    )
     inputs[indices_replaced] = tokenizer.convert_tokens_to_ids(tokenizer.mask_token)
 
     # 10% of the time, we replace masked input tokens with random word
-    indices_random = torch.bernoulli(torch.full(labels.shape, 0.5)).to(mask_type) & masked_indices & ~indices_replaced
+    indices_random = (
+        torch.bernoulli(torch.full(labels.shape, 0.5)).to(mask_type)
+        & masked_indices
+        & ~indices_replaced
+    )
     random_words = torch.randint(len(tokenizer), labels.shape, dtype=torch.long)
     inputs[indices_random] = random_words[indices_random]
 
@@ -184,24 +277,36 @@ def mask_tokens(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, args, lang
     return inputs, labels
 
 
-def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedTokenizer) -> Tuple[int, float]:
-    """ Train the model """
+def train(
+    args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedTokenizer
+) -> Tuple[int, float]:
+    """Train the model"""
     args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
+
     def collate(examples):
         model.eval()
-        examples_src, examples_tgt, examples_srctgt, examples_tgtsrc, langid_srctgt, langid_tgtsrc, psi_examples_srctgt, psi_labels = [], [], [], [], [], [], [], []
+        (
+            examples_src,
+            examples_tgt,
+            examples_srctgt,
+            examples_tgtsrc,
+            langid_srctgt,
+            langid_tgtsrc,
+            psi_examples_srctgt,
+            psi_labels,
+        ) = ([], [], [], [], [], [], [], [])
         src_len = tgt_len = 0
         bpe2word_map_src, bpe2word_map_tgt = [], []
         word_aligns = []
         for example in examples:
             end_id = example[0][0][-1].view(-1)
 
-            src_id = example[0][0][:args.block_size]
+            src_id = example[0][0][: args.block_size]
             src_id = torch.cat([src_id[:-1], end_id])
-            tgt_id = example[1][0][:args.block_size]
+            tgt_id = example[1][0][: args.block_size]
             tgt_id = torch.cat([tgt_id[:-1], end_id])
 
-            half_block_size = int(args.block_size/2)
+            half_block_size = int(args.block_size / 2)
             half_src_id = example[0][0][:half_block_size]
             half_src_id = torch.cat([half_src_id[:-1], end_id])
             half_tgt_id = example[1][0][:half_block_size]
@@ -212,13 +317,17 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
             src_len = max(src_len, len(src_id))
             tgt_len = max(tgt_len, len(tgt_id))
 
-            srctgt = torch.cat( [half_src_id, half_tgt_id] )
-            langid = torch.cat([ torch.ones_like(half_src_id), torch.ones_like(half_tgt_id)*2] )
+            srctgt = torch.cat([half_src_id, half_tgt_id])
+            langid = torch.cat(
+                [torch.ones_like(half_src_id), torch.ones_like(half_tgt_id) * 2]
+            )
             examples_srctgt.append(srctgt)
             langid_srctgt.append(langid)
 
-            tgtsrc = torch.cat( [half_tgt_id, half_src_id])
-            langid = torch.cat([ torch.ones_like(half_tgt_id), torch.ones_like(half_src_id)*2] )
+            tgtsrc = torch.cat([half_tgt_id, half_src_id])
+            langid = torch.cat(
+                [torch.ones_like(half_tgt_id), torch.ones_like(half_src_id) * 2]
+            )
             examples_tgtsrc.append(tgtsrc)
             langid_tgtsrc.append(langid)
 
@@ -227,16 +336,16 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
             neg_half_src_id = torch.cat([neg_half_src_id[:-1], end_id])
             neg_half_tgt_id = example[-1][0][:half_block_size]
             neg_half_tgt_id = torch.cat([neg_half_tgt_id[:-1], end_id])
-            if random.random()> 0.5:
-                neg_srctgt = torch.cat( [neg_half_src_id, neg_half_tgt_id] )
+            if random.random() > 0.5:
+                neg_srctgt = torch.cat([neg_half_src_id, neg_half_tgt_id])
             else:
-                neg_srctgt = torch.cat( [neg_half_tgt_id, neg_half_src_id] )
+                neg_srctgt = torch.cat([neg_half_tgt_id, neg_half_src_id])
             psi_examples_srctgt.append(neg_srctgt)
             psi_labels.append(1)
-                
+
             # [pos, neg] pair
             rd = random.random()
-            if rd> 0.75:
+            if rd > 0.75:
                 neg_srctgt = torch.cat([half_src_id, neg_half_tgt_id])
             elif rd > 0.5:
                 neg_srctgt = torch.cat([neg_half_src_id, half_tgt_id])
@@ -250,46 +359,121 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
             bpe2word_map_src.append(example[2])
             bpe2word_map_tgt.append(example[3])
             word_aligns.append(example[4])
-            
-        examples_src = pad_sequence(examples_src, batch_first=True, padding_value=tokenizer.pad_token_id)
-        examples_tgt = pad_sequence(examples_tgt, batch_first=True, padding_value=tokenizer.pad_token_id)
-        examples_srctgt = pad_sequence(examples_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
-        langid_srctgt = pad_sequence(langid_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
-        examples_tgtsrc = pad_sequence(examples_tgtsrc, batch_first=True, padding_value=tokenizer.pad_token_id)
-        langid_tgtsrc = pad_sequence(langid_tgtsrc, batch_first=True, padding_value=tokenizer.pad_token_id)
-        psi_examples_srctgt = pad_sequence(psi_examples_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
+
+        examples_src = pad_sequence(
+            examples_src, batch_first=True, padding_value=tokenizer.pad_token_id
+        )
+        examples_tgt = pad_sequence(
+            examples_tgt, batch_first=True, padding_value=tokenizer.pad_token_id
+        )
+        examples_srctgt = pad_sequence(
+            examples_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id
+        )
+        langid_srctgt = pad_sequence(
+            langid_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id
+        )
+        examples_tgtsrc = pad_sequence(
+            examples_tgtsrc, batch_first=True, padding_value=tokenizer.pad_token_id
+        )
+        langid_tgtsrc = pad_sequence(
+            langid_tgtsrc, batch_first=True, padding_value=tokenizer.pad_token_id
+        )
+        psi_examples_srctgt = pad_sequence(
+            psi_examples_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id
+        )
         psi_labels = torch.tensor(psi_labels)
         if word_aligns[0] is None:
             word_aligns = None
         if args.n_gpu > 1 or args.local_rank != -1:
-            guides = model.module.get_aligned_word(examples_src, examples_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, src_len, tgt_len, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold, word_aligns=word_aligns)
+            guides = model.module.get_aligned_word(
+                examples_src,
+                examples_tgt,
+                bpe2word_map_src,
+                bpe2word_map_tgt,
+                args.device,
+                src_len,
+                tgt_len,
+                align_layer=args.align_layer,
+                extraction=args.extraction,
+                softmax_threshold=args.softmax_threshold,
+                word_aligns=word_aligns,
+            )
         else:
-            guides = model.get_aligned_word(examples_src, examples_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, src_len, tgt_len, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold, word_aligns=word_aligns)
+            guides = model.get_aligned_word(
+                examples_src,
+                examples_tgt,
+                bpe2word_map_src,
+                bpe2word_map_tgt,
+                args.device,
+                src_len,
+                tgt_len,
+                align_layer=args.align_layer,
+                extraction=args.extraction,
+                softmax_threshold=args.softmax_threshold,
+                word_aligns=word_aligns,
+            )
 
-        return examples_src, examples_tgt, guides, examples_srctgt, langid_srctgt, examples_tgtsrc, langid_tgtsrc, psi_examples_srctgt, psi_labels
+        return (
+            examples_src,
+            examples_tgt,
+            guides,
+            examples_srctgt,
+            langid_srctgt,
+            examples_tgtsrc,
+            langid_tgtsrc,
+            psi_examples_srctgt,
+            psi_labels,
+        )
 
-
-    train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
+    train_sampler = (
+        RandomSampler(train_dataset)
+        if args.local_rank == -1
+        else DistributedSampler(train_dataset)
+    )
     train_dataloader = DataLoader(
-        train_dataset, sampler=train_sampler, batch_size=args.train_batch_size, collate_fn=collate
+        train_dataset,
+        sampler=train_sampler,
+        batch_size=args.train_batch_size,
+        collate_fn=collate,
     )
 
-    t_total = len(train_dataloader) // args.gradient_accumulation_steps * args.num_train_epochs
+    t_total = (
+        len(train_dataloader)
+        // args.gradient_accumulation_steps
+        * args.num_train_epochs
+    )
     if args.max_steps > 0 and args.max_steps < t_total:
         t_total = args.max_steps
-        args.num_train_epochs = args.max_steps // (len(train_dataloader) // args.gradient_accumulation_steps) + 1
-    
+        args.num_train_epochs = (
+            args.max_steps
+            // (len(train_dataloader) // args.gradient_accumulation_steps)
+            + 1
+        )
+
     # Prepare optimizer and schedule (linear warmup and decay)
     no_decay = ["bias", "LayerNorm.weight"]
 
     optimizer_grouped_parameters = [
         {
-            "params": [p for n, p in model.named_parameters() if ( not (any(nd in n for nd in no_decay)) )],
+            "params": [
+                p
+                for n, p in model.named_parameters()
+                if (not (any(nd in n for nd in no_decay)))
+            ],
             "weight_decay": args.weight_decay,
         },
-        {"params": [p for n, p in model.named_parameters() if ( (any(nd in n for nd in no_decay)) )], "weight_decay": 0.0},
+        {
+            "params": [
+                p
+                for n, p in model.named_parameters()
+                if ((any(nd in n for nd in no_decay)))
+            ],
+            "weight_decay": 0.0,
+        },
     ]
-    optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
+    optimizer = AdamW(
+        optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon
+    )
     scheduler = get_linear_schedule_with_warmup(
         optimizer, num_warmup_steps=args.warmup_steps, num_training_steps=t_total
     )
@@ -298,8 +482,12 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
         try:
             from apex import amp
         except ImportError:
-            raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use fp16 training.")
-        model, optimizer = amp.initialize(model, optimizer, opt_level=args.fp16_opt_level)
+            raise ImportError(
+                "Please install apex from https://www.github.com/nvidia/apex to use fp16 training."
+            )
+        model, optimizer = amp.initialize(
+            model, optimizer, opt_level=args.fp16_opt_level
+        )
 
     # multi-gpu training (should be after apex fp16 initialization)
     if args.n_gpu > 1:
@@ -308,14 +496,19 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
     # Distributed training (should be after apex fp16 initialization)
     if args.local_rank != -1:
         model = torch.nn.parallel.DistributedDataParallel(
-            model, device_ids=[args.local_rank], output_device=args.local_rank, find_unused_parameters=True
+            model,
+            device_ids=[args.local_rank],
+            output_device=args.local_rank,
+            find_unused_parameters=True,
         )
 
     # Train!
     logger.info("***** Running training *****")
     logger.info("  Num examples = %d", len(train_dataset))
     logger.info("  Num Epochs = %d", args.num_train_epochs)
-    logger.info("  Instantaneous batch size per GPU = %d", args.per_gpu_train_batch_size)
+    logger.info(
+        "  Instantaneous batch size per GPU = %d", args.per_gpu_train_batch_size
+    )
     logger.info(
         "  Total train batch size (w. parallel, distributed & accumulation) = %d",
         args.train_batch_size
@@ -329,7 +522,9 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
     # Check if continuing training from a checkpoint
     tr_loss, logging_loss = 0.0, 0.0
 
-    model_to_resize = model.module if hasattr(model, "module") else model  # Take care of distributed/parallel training
+    model_to_resize = (
+        model.module if hasattr(model, "module") else model
+    )  # Take care of distributed/parallel training
     model_to_resize.resize_token_embeddings(len(tokenizer))
 
     model.zero_grad()
@@ -349,24 +544,45 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
             loss.backward()
         return tot_loss
 
-    tqdm_iterator = trange(int(t_total), desc="Iteration", disable=args.local_rank not in [-1, 0])
+    tqdm_iterator = trange(
+        int(t_total), desc="Iteration", disable=args.local_rank not in [-1, 0]
+    )
     for _ in range(int(args.num_train_epochs)):
         for step, batch in enumerate(train_dataloader):
             model.train()
 
             if args.train_so or args.train_co:
                 inputs_src, inputs_tgt = batch[0].clone(), batch[1].clone()
-                inputs_src, inputs_tgt = inputs_src.to(args.device), inputs_tgt.to(args.device)
-                attention_mask_src, attention_mask_tgt = (inputs_src!=0), (inputs_tgt!=0)
+                inputs_src, inputs_tgt = inputs_src.to(args.device), inputs_tgt.to(
+                    args.device
+                )
+                attention_mask_src, attention_mask_tgt = (inputs_src != 0), (
+                    inputs_tgt != 0
+                )
                 guide = batch[2].to(args.device)
-                loss = model(inputs_src=inputs_src, inputs_tgt=inputs_tgt, attention_mask_src=attention_mask_src, attention_mask_tgt=attention_mask_tgt, guide=guide, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold, train_so=args.train_so, train_co=args.train_co)
+                loss = model(
+                    inputs_src=inputs_src,
+                    inputs_tgt=inputs_tgt,
+                    attention_mask_src=attention_mask_src,
+                    attention_mask_tgt=attention_mask_tgt,
+                    guide=guide,
+                    align_layer=args.align_layer,
+                    extraction=args.extraction,
+                    softmax_threshold=args.softmax_threshold,
+                    train_so=args.train_so,
+                    train_co=args.train_co,
+                )
                 tr_loss = backward_loss(loss, tr_loss)
 
             if args.train_mlm:
                 inputs_src, labels_src = mask_tokens(batch[0], tokenizer, args)
                 inputs_tgt, labels_tgt = mask_tokens(batch[1], tokenizer, args)
-                inputs_src, inputs_tgt = inputs_src.to(args.device), inputs_tgt.to(args.device)
-                labels_src, labels_tgt = labels_src.to(args.device), labels_tgt.to(args.device)
+                inputs_src, inputs_tgt = inputs_src.to(args.device), inputs_tgt.to(
+                    args.device
+                )
+                labels_src, labels_tgt = labels_src.to(args.device), labels_tgt.to(
+                    args.device
+                )
                 loss = model(inputs_src=inputs_src, labels_src=labels_src)
                 tr_loss = backward_loss(loss, tr_loss)
 
@@ -378,37 +594,63 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
                 if not args.train_tlm_full:
                     rand_ids = [int(random.random() > 0.5)]
                 for rand_id in rand_ids:
-                    select_srctgt = batch[int(3+rand_id*2)]
-                    select_langid = batch[int(4+rand_id*2)]
+                    select_srctgt = batch[int(3 + rand_id * 2)]
+                    select_langid = batch[int(4 + rand_id * 2)]
                     for lang_id in [1, 2]:
-                        inputs_srctgt, labels_srctgt = mask_tokens(select_srctgt, tokenizer, args, select_langid, lang_id)
-                        inputs_srctgt, labels_srctgt = inputs_srctgt.to(args.device), labels_srctgt.to(args.device)
+                        inputs_srctgt, labels_srctgt = mask_tokens(
+                            select_srctgt, tokenizer, args, select_langid, lang_id
+                        )
+                        inputs_srctgt, labels_srctgt = inputs_srctgt.to(
+                            args.device
+                        ), labels_srctgt.to(args.device)
                         loss = model(inputs_src=inputs_srctgt, labels_src=labels_srctgt)
                         tr_loss = backward_loss(loss, tr_loss)
 
             if args.train_psi:
-                loss = model(inputs_src=batch[7].to(args.device), labels_psi=batch[8].to(args.device), align_layer=args.align_layer+1)
+                loss = model(
+                    inputs_src=batch[7].to(args.device),
+                    labels_psi=batch[8].to(args.device),
+                    align_layer=args.align_layer + 1,
+                )
                 tr_loss = backward_loss(loss, tr_loss)
 
             if (step + 1) % args.gradient_accumulation_steps == 0:
                 if args.fp16:
-                    torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
+                    torch.nn.utils.clip_grad_norm_(
+                        amp.master_params(optimizer), args.max_grad_norm
+                    )
                 else:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                    torch.nn.utils.clip_grad_norm_(
+                        model.parameters(), args.max_grad_norm
+                    )
                 optimizer.step()
                 scheduler.step()  # Update learning rate schedule
                 model.zero_grad()
                 global_step += 1
                 tqdm_iterator.update()
 
-                if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
-                    logger.info("  Step %s. Training loss = %s", str(global_step), str((tr_loss-logging_loss)/args.logging_steps))
+                if (
+                    args.local_rank in [-1, 0]
+                    and args.logging_steps > 0
+                    and global_step % args.logging_steps == 0
+                ):
+                    logger.info(
+                        "  Step %s. Training loss = %s",
+                        str(global_step),
+                        str((tr_loss - logging_loss) / args.logging_steps),
+                    )
                     logging_loss = tr_loss
 
-                if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:
+                if (
+                    args.local_rank in [-1, 0]
+                    and args.save_steps > 0
+                    and global_step % args.save_steps == 0
+                ):
                     checkpoint_prefix = "checkpoint"
                     # Save model checkpoint
-                    output_dir = os.path.join(args.output_dir, "{}-{}".format(checkpoint_prefix, global_step))
+                    output_dir = os.path.join(
+                        args.output_dir, "{}-{}".format(checkpoint_prefix, global_step)
+                    )
                     os.makedirs(output_dir, exist_ok=True)
                     model_to_save = (
                         model.module if hasattr(model, "module") else model
@@ -421,9 +663,15 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
 
                     _rotate_checkpoints(args, checkpoint_prefix)
 
-                    torch.save(optimizer.state_dict(), os.path.join(output_dir, "optimizer.pt"))
-                    torch.save(scheduler.state_dict(), os.path.join(output_dir, "scheduler.pt"))
-                    logger.info("Saving optimizer and scheduler states to %s", output_dir)
+                    torch.save(
+                        optimizer.state_dict(), os.path.join(output_dir, "optimizer.pt")
+                    )
+                    torch.save(
+                        scheduler.state_dict(), os.path.join(output_dir, "scheduler.pt")
+                    )
+                    logger.info(
+                        "Saving optimizer and scheduler states to %s", output_dir
+                    )
 
             if global_step > t_total:
                 break
@@ -432,7 +680,10 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
 
     return global_step, tr_loss / global_step
 
-def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefix="") -> Dict:
+
+def evaluate(
+    args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefix=""
+) -> Dict:
     # Loop to handle MNLI double evaluation (matched, mis-matched)
     eval_output_dir = args.output_dir
 
@@ -445,19 +696,28 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
     # Note that DistributedSampler samples randomly
     def collate(examples):
         model.eval()
-        examples_src, examples_tgt, examples_srctgt, examples_tgtsrc, langid_srctgt, langid_tgtsrc, psi_examples_srctgt, psi_labels = [], [], [], [], [], [], [], []
+        (
+            examples_src,
+            examples_tgt,
+            examples_srctgt,
+            examples_tgtsrc,
+            langid_srctgt,
+            langid_tgtsrc,
+            psi_examples_srctgt,
+            psi_labels,
+        ) = ([], [], [], [], [], [], [], [])
         src_len = tgt_len = 0
         bpe2word_map_src, bpe2word_map_tgt = [], []
         word_aligns = []
         for example in examples:
             end_id = example[0][0][-1].view(-1)
 
-            src_id = example[0][0][:args.block_size]
+            src_id = example[0][0][: args.block_size]
             src_id = torch.cat([src_id[:-1], end_id])
-            tgt_id = example[1][0][:args.block_size]
+            tgt_id = example[1][0][: args.block_size]
             tgt_id = torch.cat([tgt_id[:-1], end_id])
 
-            half_block_size = int(args.block_size/2)
+            half_block_size = int(args.block_size / 2)
             half_src_id = example[0][0][:half_block_size]
             half_src_id = torch.cat([half_src_id[:-1], end_id])
             half_tgt_id = example[1][0][:half_block_size]
@@ -468,13 +728,17 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
             src_len = max(src_len, len(src_id))
             tgt_len = max(tgt_len, len(tgt_id))
 
-            srctgt = torch.cat( [half_src_id, half_tgt_id] )
-            langid = torch.cat([ torch.ones_like(half_src_id), torch.ones_like(half_tgt_id)*2] )
+            srctgt = torch.cat([half_src_id, half_tgt_id])
+            langid = torch.cat(
+                [torch.ones_like(half_src_id), torch.ones_like(half_tgt_id) * 2]
+            )
             examples_srctgt.append(srctgt)
             langid_srctgt.append(langid)
 
-            tgtsrc = torch.cat( [half_tgt_id, half_src_id] )
-            langid = torch.cat([ torch.ones_like(half_tgt_id), torch.ones_like(half_src_id)*2] )
+            tgtsrc = torch.cat([half_tgt_id, half_src_id])
+            langid = torch.cat(
+                [torch.ones_like(half_tgt_id), torch.ones_like(half_src_id) * 2]
+            )
             examples_tgtsrc.append(tgtsrc)
             langid_tgtsrc.append(langid)
 
@@ -483,10 +747,10 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
             neg_half_src_id = torch.cat([neg_half_src_id[:-1], end_id])
             neg_half_tgt_id = example[-1][0][:half_block_size]
             neg_half_tgt_id = torch.cat([neg_half_tgt_id[:-1], end_id])
-            neg_srctgt = torch.cat( [neg_half_src_id, neg_half_tgt_id] )
+            neg_srctgt = torch.cat([neg_half_src_id, neg_half_tgt_id])
             psi_examples_srctgt.append(neg_srctgt)
             psi_labels.append(1)
-                
+
             # [pos, neg] pair
             neg_srctgt = torch.cat([half_src_id, neg_half_tgt_id])
             psi_examples_srctgt.append(neg_srctgt)
@@ -496,27 +760,62 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
             bpe2word_map_tgt.append(example[3])
             word_aligns.append(example[4])
 
-            
-        examples_src = pad_sequence(examples_src, batch_first=True, padding_value=tokenizer.pad_token_id)
-        examples_tgt = pad_sequence(examples_tgt, batch_first=True, padding_value=tokenizer.pad_token_id)
-        examples_srctgt = pad_sequence(examples_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
-        langid_srctgt = pad_sequence(langid_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
-        examples_tgtsrc = pad_sequence(examples_tgtsrc, batch_first=True, padding_value=tokenizer.pad_token_id)
-        langid_tgtsrc = pad_sequence(langid_tgtsrc, batch_first=True, padding_value=tokenizer.pad_token_id)
-        psi_examples_srctgt = pad_sequence(psi_examples_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id)
+        examples_src = pad_sequence(
+            examples_src, batch_first=True, padding_value=tokenizer.pad_token_id
+        )
+        examples_tgt = pad_sequence(
+            examples_tgt, batch_first=True, padding_value=tokenizer.pad_token_id
+        )
+        examples_srctgt = pad_sequence(
+            examples_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id
+        )
+        langid_srctgt = pad_sequence(
+            langid_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id
+        )
+        examples_tgtsrc = pad_sequence(
+            examples_tgtsrc, batch_first=True, padding_value=tokenizer.pad_token_id
+        )
+        langid_tgtsrc = pad_sequence(
+            langid_tgtsrc, batch_first=True, padding_value=tokenizer.pad_token_id
+        )
+        psi_examples_srctgt = pad_sequence(
+            psi_examples_srctgt, batch_first=True, padding_value=tokenizer.pad_token_id
+        )
         psi_labels = torch.tensor(psi_labels)
         if word_aligns[0] is None:
             word_aligns = None
-        if args.n_gpu > 1 or args.local_rank != -1:
-            guides = model.module.get_aligned_word(examples_src, examples_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, src_len, tgt_len, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold, word_aligns=word_aligns)
-        else:
-            guides = model.get_aligned_word(examples_src, examples_tgt, bpe2word_map_src, bpe2word_map_tgt, args.device, src_len, tgt_len, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold, word_aligns=word_aligns)
+        guides = model.get_aligned_word(
+            examples_src,
+            examples_tgt,
+            bpe2word_map_src,
+            bpe2word_map_tgt,
+            args.device,
+            src_len,
+            tgt_len,
+            align_layer=args.align_layer,
+            extraction=args.extraction,
+            softmax_threshold=args.softmax_threshold,
+            word_aligns=word_aligns,
+        )
 
-        return examples_src, examples_tgt, guides, examples_srctgt, langid_srctgt, examples_tgtsrc, langid_tgtsrc, psi_examples_srctgt, psi_labels
+        return (
+            examples_src,
+            examples_tgt,
+            guides,
+            examples_srctgt,
+            langid_srctgt,
+            examples_tgtsrc,
+            langid_tgtsrc,
+            psi_examples_srctgt,
+            psi_labels,
+        )
 
     eval_sampler = SequentialSampler(eval_dataset)
     eval_dataloader = DataLoader(
-        eval_dataset, sampler=eval_sampler, batch_size=args.eval_batch_size, collate_fn=collate
+        eval_dataset,
+        sampler=eval_sampler,
+        batch_size=args.eval_batch_size,
+        collate_fn=collate,
     )
 
     # multi-gpu evaluate
@@ -532,7 +831,7 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
     model.eval()
     set_seed(args)  # Added here for reproducibility
 
-    def post_loss(loss, tot_loss): 
+    def post_loss(loss, tot_loss):
         if args.n_gpu > 1:
             loss = loss.mean()  # mean() to average on multi-gpu parallel training
         tot_loss += loss.item()
@@ -542,17 +841,36 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
         with torch.no_grad():
             if args.train_so or args.train_co:
                 inputs_src, inputs_tgt = batch[0].clone(), batch[1].clone()
-                inputs_src, inputs_tgt = inputs_src.to(args.device), inputs_tgt.to(args.device)
-                attention_mask_src, attention_mask_tgt = (inputs_src!=0), (inputs_tgt!=0)
+                inputs_src, inputs_tgt = inputs_src.to(args.device), inputs_tgt.to(
+                    args.device
+                )
+                attention_mask_src, attention_mask_tgt = (inputs_src != 0), (
+                    inputs_tgt != 0
+                )
                 guide = batch[2].to(args.device)
-                loss = model(inputs_src=inputs_src, inputs_tgt=inputs_tgt, attention_mask_src=attention_mask_src, attention_mask_tgt=attention_mask_tgt, guide=guide, align_layer=args.align_layer, extraction=args.extraction, softmax_threshold=args.softmax_threshold, train_so=args.train_so, train_co=args.train_co)
+                loss = model(
+                    inputs_src=inputs_src,
+                    inputs_tgt=inputs_tgt,
+                    attention_mask_src=attention_mask_src,
+                    attention_mask_tgt=attention_mask_tgt,
+                    guide=guide,
+                    align_layer=args.align_layer,
+                    extraction=args.extraction,
+                    softmax_threshold=args.softmax_threshold,
+                    train_so=args.train_so,
+                    train_co=args.train_co,
+                )
                 eval_loss = post_loss(loss, eval_loss)
 
             if args.train_mlm:
                 inputs_src, labels_src = mask_tokens(batch[0], tokenizer, args)
                 inputs_tgt, labels_tgt = mask_tokens(batch[1], tokenizer, args)
-                inputs_src, inputs_tgt = inputs_src.to(args.device), inputs_tgt.to(args.device)
-                labels_src, labels_tgt = labels_src.to(args.device), labels_tgt.to(args.device)
+                inputs_src, inputs_tgt = inputs_src.to(args.device), inputs_tgt.to(
+                    args.device
+                )
+                labels_src, labels_tgt = labels_src.to(args.device), labels_tgt.to(
+                    args.device
+                )
                 loss = model(inputs_src=inputs_src, labels_src=labels_src)
                 eval_loss = post_loss(loss, eval_loss)
 
@@ -565,13 +883,24 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
                     select_ids = [0]
                 for select_id in select_ids:
                     for lang_id in [1, 2]:
-                        inputs_srctgt, labels_srctgt = mask_tokens(batch[3+select_id*2], tokenizer, args, batch[4+select_id*2], lang_id)
-                        inputs_srctgt, labels_srctgt = inputs_srctgt.to(args.device), labels_srctgt.to(args.device)
+                        inputs_srctgt, labels_srctgt = mask_tokens(
+                            batch[3 + select_id * 2],
+                            tokenizer,
+                            args,
+                            batch[4 + select_id * 2],
+                            lang_id,
+                        )
+                        inputs_srctgt, labels_srctgt = inputs_srctgt.to(
+                            args.device
+                        ), labels_srctgt.to(args.device)
                         loss = model(inputs_src=inputs_srctgt, labels_src=labels_srctgt)
                         eval_loss = post_loss(loss, eval_loss)
 
             if args.train_psi:
-                loss = model(inputs_src=batch[7].to(args.device), labels_psi=batch[8].to(args.device))
+                loss = model(
+                    inputs_src=batch[7].to(args.device),
+                    labels_psi=batch[8].to(args.device),
+                )
                 eval_loss = post_loss(loss, eval_loss)
 
         nb_eval_steps += 1
@@ -596,7 +925,11 @@ def main():
 
     # Required parameters
     parser.add_argument(
-        "--train_data_file", default=None, type=str, required=True, help="The input training data file (a text file)."
+        "--train_data_file",
+        default=None,
+        type=str,
+        required=True,
+        help="The input training data file (a text file).",
     )
     parser.add_argument(
         "--output_dir",
@@ -613,31 +946,52 @@ def main():
     parser.add_argument("--train_co", action="store_true")
     # Supervised settings
     parser.add_argument(
-        "--train_gold_file", default=None, type=str, help="Gold alignment for training data"
+        "--train_gold_file",
+        default=None,
+        type=str,
+        help="Gold alignment for training data",
     )
     parser.add_argument(
-        "--eval_gold_file", default=None, type=str, help="Gold alignment for evaluation data"
+        "--eval_gold_file",
+        default=None,
+        type=str,
+        help="Gold alignment for evaluation data",
     )
     parser.add_argument(
-        "--ignore_possible_alignments", action="store_true", help="Whether to ignore possible gold alignments"
+        "--ignore_possible_alignments",
+        action="store_true",
+        help="Whether to ignore possible gold alignments",
     )
     parser.add_argument(
-        "--gold_one_index", action="store_true", help="Whether the gold alignment files are one-indexed"
+        "--gold_one_index",
+        action="store_true",
+        help="Whether the gold alignment files are one-indexed",
     )
     # Other parameters
-    parser.add_argument("--cache_data", action="store_true", help='if cache the dataset')
-    parser.add_argument("--align_layer", type=int, default=8, help="layer for alignment extraction")
     parser.add_argument(
-        "--extraction", default='softmax', type=str, choices=['softmax', 'entmax'], help='softmax or entmax'
+        "--cache_data", action="store_true", help="if cache the dataset"
     )
     parser.add_argument(
-        "--softmax_threshold", type=float, default=0.001
+        "--align_layer", type=int, default=8, help="layer for alignment extraction"
     )
     parser.add_argument(
-        "--eval_data_file", default=None, type=str, help="An optional input evaluation data file to evaluate the perplexity on (a text file).",
+        "--extraction",
+        default="softmax",
+        type=str,
+        choices=["softmax", "entmax"],
+        help="softmax or entmax",
+    )
+    parser.add_argument("--softmax_threshold", type=float, default=0.001)
+    parser.add_argument(
+        "--eval_data_file",
+        default=None,
+        type=str,
+        help="An optional input evaluation data file to evaluate the perplexity on (a text file).",
     )
     parser.add_argument(
-        "--should_continue", action="store_true", help="Whether to continue from latest checkpoint in output_dir"
+        "--should_continue",
+        action="store_true",
+        help="Whether to continue from latest checkpoint in output_dir",
     )
     parser.add_argument(
         "--model_name_or_path",
@@ -646,7 +1000,10 @@ def main():
         help="The model checkpoint for weights initialization. Leave None if you want to train a model from scratch.",
     )
     parser.add_argument(
-        "--mlm_probability", type=float, default=0.15, help="Ratio of tokens to mask for masked language modeling loss"
+        "--mlm_probability",
+        type=float,
+        default=0.15,
+        help="Ratio of tokens to mask for masked language modeling loss",
     )
     parser.add_argument(
         "--config_name",
@@ -674,11 +1031,23 @@ def main():
         "The training dataset will be truncated in block of this size for training."
         "Default to the model max input length for single sentence inputs (take into account special tokens).",
     )
-    parser.add_argument("--do_train", action="store_true", help="Whether to run training.")
-    parser.add_argument("--do_eval", action="store_true", help="Whether to run eval on the dev set.")
-    parser.add_argument("--per_gpu_train_batch_size", default=2, type=int, help="Batch size per GPU/CPU for training.")
     parser.add_argument(
-        "--per_gpu_eval_batch_size", default=2, type=int, help="Batch size per GPU/CPU for evaluation."
+        "--do_train", action="store_true", help="Whether to run training."
+    )
+    parser.add_argument(
+        "--do_eval", action="store_true", help="Whether to run eval on the dev set."
+    )
+    parser.add_argument(
+        "--per_gpu_train_batch_size",
+        default=2,
+        type=int,
+        help="Batch size per GPU/CPU for training.",
+    )
+    parser.add_argument(
+        "--per_gpu_eval_batch_size",
+        default=2,
+        type=int,
+        help="Batch size per GPU/CPU for evaluation.",
     )
     parser.add_argument(
         "--gradient_accumulation_steps",
@@ -686,37 +1055,68 @@ def main():
         default=4,
         help="Number of updates steps to accumulate before performing a backward/update pass.",
     )
-    parser.add_argument("--learning_rate", default=2e-5, type=float, help="The initial learning rate for Adam.")
-    parser.add_argument("--weight_decay", default=0.0, type=float, help="Weight decay if we apply some.")
-    parser.add_argument("--adam_epsilon", default=1e-8, type=float, help="Epsilon for Adam optimizer.")
-    parser.add_argument("--max_grad_norm", default=1.0, type=float, help="Max gradient norm.")
     parser.add_argument(
-        "--num_train_epochs", default=1.0, type=float, help="Total number of training epochs to perform."
+        "--learning_rate",
+        default=2e-5,
+        type=float,
+        help="The initial learning rate for Adam.",
+    )
+    parser.add_argument(
+        "--weight_decay", default=0.0, type=float, help="Weight decay if we apply some."
+    )
+    parser.add_argument(
+        "--adam_epsilon", default=1e-8, type=float, help="Epsilon for Adam optimizer."
+    )
+    parser.add_argument(
+        "--max_grad_norm", default=1.0, type=float, help="Max gradient norm."
+    )
+    parser.add_argument(
+        "--num_train_epochs",
+        default=1.0,
+        type=float,
+        help="Total number of training epochs to perform.",
     )
     parser.add_argument(
         "--max_steps",
         default=-1,
         type=int,
-        help="If > 0: set the maximum number of training steps to perform."
+        help="If > 0: set the maximum number of training steps to perform.",
     )
-    parser.add_argument("--warmup_steps", default=0, type=int, help="Linear warmup over warmup_steps.")
+    parser.add_argument(
+        "--warmup_steps", default=0, type=int, help="Linear warmup over warmup_steps."
+    )
 
-    parser.add_argument("--logging_steps", type=int, default=500, help="Log every X updates steps.")
-    parser.add_argument("--save_steps", type=int, default=500, help="Save checkpoint every X updates steps.")
+    parser.add_argument(
+        "--logging_steps", type=int, default=500, help="Log every X updates steps."
+    )
+    parser.add_argument(
+        "--save_steps",
+        type=int,
+        default=500,
+        help="Save checkpoint every X updates steps.",
+    )
     parser.add_argument(
         "--save_total_limit",
         type=int,
         default=None,
         help="Limit the total amount of checkpoints, delete the older checkpoints in the output_dir, does not delete by default",
     )
-    parser.add_argument("--no_cuda", action="store_true", help="Avoid using CUDA when available")
     parser.add_argument(
-        "--overwrite_output_dir", action="store_true", help="Overwrite the content of the output directory"
+        "--no_cuda", action="store_true", help="Avoid using CUDA when available"
     )
     parser.add_argument(
-        "--overwrite_cache", action="store_true", help="Overwrite the cached training and evaluation sets"
+        "--overwrite_output_dir",
+        action="store_true",
+        help="Overwrite the content of the output directory",
     )
-    parser.add_argument("--seed", type=int, default=42, help="random seed for initialization")
+    parser.add_argument(
+        "--overwrite_cache",
+        action="store_true",
+        help="Overwrite the cached training and evaluation sets",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=42, help="random seed for initialization"
+    )
     parser.add_argument(
         "--fp16",
         action="store_true",
@@ -729,7 +1129,12 @@ def main():
         help="For fp16: Apex AMP optimization level selected in ['O0', 'O1', 'O2', and 'O3']."
         "See details at https://nvidia.github.io/apex/amp.html",
     )
-    parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
+    parser.add_argument(
+        "--local_rank",
+        type=int,
+        default=-1,
+        help="For distributed training: local_rank",
+    )
     args = parser.parse_args()
 
     if args.eval_data_file is None and args.do_eval:
@@ -740,7 +1145,9 @@ def main():
     if args.should_continue:
         sorted_checkpoints = _sorted_checkpoints(args)
         if len(sorted_checkpoints) == 0:
-            raise ValueError("Used --should_continue but no checkpoint was found in --output_dir.")
+            raise ValueError(
+                "Used --should_continue but no checkpoint was found in --output_dir."
+            )
         else:
             args.model_name_or_path = sorted_checkpoints[-1]
 
@@ -758,7 +1165,9 @@ def main():
 
     # Setup CUDA, GPU & distributed training
     if args.local_rank == -1 or args.no_cuda:
-        device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
+        device = torch.device(
+            "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+        )
         args.n_gpu = 0 if args.no_cuda else torch.cuda.device_count()
     else:  # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
         torch.cuda.set_device(args.local_rank)
@@ -789,23 +1198,37 @@ def main():
     if args.local_rank not in [-1, 0]:
         torch.distributed.barrier()  # Barrier to make sure only the first process in distributed training download model & vocab
 
-    config_class, model_class, tokenizer_class = BertConfig, BertForMaskedLM, BertTokenizer
+    config_class, model_class, tokenizer_class = (
+        BertConfig,
+        BertForMaskedLM,
+        BertTokenizer,
+    )
 
     if args.config_name:
-        config = config_class.from_pretrained(args.config_name, cache_dir=args.cache_dir)
+        config = config_class.from_pretrained(
+            args.config_name, cache_dir=args.cache_dir
+        )
     elif args.model_name_or_path:
-        config = config_class.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
+        config = config_class.from_pretrained(
+            args.model_name_or_path, cache_dir=args.cache_dir
+        )
     else:
         config = config_class()
 
     if args.tokenizer_name:
-        tokenizer = tokenizer_class.from_pretrained(args.tokenizer_name, cache_dir=args.cache_dir)
+        tokenizer = tokenizer_class.from_pretrained(
+            args.tokenizer_name, cache_dir=args.cache_dir
+        )
     elif args.model_name_or_path:
-        tokenizer = tokenizer_class.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
+        tokenizer = tokenizer_class.from_pretrained(
+            args.model_name_or_path, cache_dir=args.cache_dir
+        )
     else:
         raise ValueError(
             "You are instantiating a new {} tokenizer. This is not supported, but you can do it from another script, save it,"
-            "and load it from here, using --tokenizer_name".format(tokenizer_class.__name__)
+            "and load it from here, using --tokenizer_name".format(
+                tokenizer_class.__name__
+            )
         )
 
     modeling.PAD_ID = tokenizer.pad_token_id
@@ -872,7 +1295,9 @@ def main():
         logger.info("Evaluate the following checkpoints: %s", checkpoints)
         for checkpoint in checkpoints:
             global_step = checkpoint.split("-")[-1] if len(checkpoints) > 1 else ""
-            prefix = checkpoint.split("/")[-1] if checkpoint.find("checkpoint") != -1 else ""
+            prefix = (
+                checkpoint.split("/")[-1] if checkpoint.find("checkpoint") != -1 else ""
+            )
 
             model = model_class.from_pretrained(checkpoint)
             model.to(args.device)
